@@ -12,6 +12,20 @@ Contour replaces a pile of scattered modulation and shaping tools with a single 
 
 All three work on **track envelopes**, **automation items**, and **MIDI CC**.
 
+## In action
+
+**Transform** — grab the colour-coded handles on the shape and drag (stretch / scale / warp / tilt):
+
+![Transform overlay](media/Transform.gif)
+
+**Generate** an LFO with a live preview, and **Reduce** point density non-destructively:
+
+![Generate](media/Generate-env.gif)
+
+![Reduce](media/Reduce.gif)
+
+The same panel follows your context and works identically on automation items and MIDI CC.
+
 ---
 
 ## Requirements
