@@ -1,0 +1,437 @@
+package.path = package.path .. ";./Contour/?.lua;./?.lua;./tests/?.lua"
+local h = require("harness")
+local lfo = require("core.lfo")
+
+h.test("cycleLength free", function()
+  h.almost(lfo.cycleLength({ mode = "free", cycles = 4 }, 8.0), 2.0)
+end)
+h.test("cycleLength hz", function()
+  h.almost(lfo.cycleLength({ mode = "hz", hz = 2 }, 8.0), 0.5)
+end)
+h.test("cycleLength sync passthrough", function()
+  h.almost(lfo.cycleLength({ mode = "sync", cycleSec = 0.75 }, 8.0), 0.75)
+end)
+
+-- Native musical rate: period (QN/cycle) = 8 * lengthFrac * feelMult / freq. Verified by the
+-- cycle counts in a 2-bar / 8-QN selection (cycles = 8 / QNPerCycle) against the native dumps.
+h.test("musicalBeatsPerCycle matches native cycle counts", function()
+  local function cyclesIn8(L, mult, F) return 8 / lfo.musicalBeatsPerCycle(L, mult, F) end
+  h.almost(cyclesIn8(0.25, 1, 0.5), 2)    -- CC1:  length 1/4, freq 1/2 -> 2 cycles
+  h.almost(cyclesIn8(0.25, 1, 1.0), 4)    -- CC28: freq 1               -> 4 cycles
+  h.almost(cyclesIn8(0.25, 1, 0.25), 1)   -- CC27: freq 1/4             -> 1 cycle
+  h.almost(cyclesIn8(0.5, 1, 0.5), 1)     -- CC36: length 1/2           -> 1 cycle
+  h.almost(cyclesIn8(0.125, 1, 0.5), 4)   -- CC37: length 1/8           -> 4 cycles
+  -- triplet shortens the period (more cycles), dotted lengthens it (fewer):
+  h.almost(lfo.musicalBeatsPerCycle(0.25, 2/3, 1), lfo.musicalBeatsPerCycle(0.25, 1, 1) * 2/3)
+  h.almost(lfo.musicalBeatsPerCycle(0.25, 1.5, 1), lfo.musicalBeatsPerCycle(0.25, 1, 1) * 1.5)
+end)
+h.test("cycleLength sync without cycleSec errors", function()
+  h.eq(pcall(lfo.cycleLength, { mode = "sync" }, 8.0), false)
+end)
+
+h.test("quantize off is identity", function()
+  h.almost(lfo.quantizeBipolar(0.3, nil), 0.3)
+  h.almost(lfo.quantizeBipolar(0.3, 1), 0.3)
+end)
+h.test("quantize 2 steps snaps to -1/+1", function()
+  h.eq(lfo.quantizeBipolar(0.2, 2), 1)
+  h.eq(lfo.quantizeBipolar(-0.2, 2), -1)
+end)
+h.test("quantize 3 steps has a zero", function()
+  h.almost(lfo.quantizeBipolar(0.1, 3), 0)
+end)
+
+h.test("fadeDepth no fades is full", function()
+  h.eq(lfo.fadeDepth(0.0, 0, 0), 1)
+  h.eq(lfo.fadeDepth(0.5, 0, 0), 1)
+end)
+h.test("fadeDepth ramps in and out", function()
+  h.almost(lfo.fadeDepth(0.0, 0.2, 0), 0)     -- start of a fade-in
+  h.almost(lfo.fadeDepth(0.1, 0.2, 0), 0.5)   -- halfway through fade-in
+  h.almost(lfo.fadeDepth(1.0, 0, 0.2), 0)     -- end of a fade-out
+end)
+
+local shapes = require("core.shapes")
+
+-- NATIVE MATCH (v2.4): sine uses ULTRA-SPARSE extremum placement (one point per
+-- waveform extremum: trough at integer phase, peak at half-integer phase) + a final
+-- point at rel=1; density is IGNORED for sine. 1 cycle over [0,1] => extrema at
+-- rel 0 (trough) and 0.5 (peak), plus the rel=1 endpoint (trough) => 3 points.
+h.test("generate sine extremum placement and endpoints", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 1 }, {
+    shape = "sine", rate = { mode = "free", cycles = 1 },
+    amplitude = 1, baseline = 0, density = 4,
+  })
+  h.eq(#pts, 3)
+  h.almost(pts[1].time, 0)
+  h.almost(pts[#pts].time, 1)
+  h.almost(pts[1].value, -1, 1e-9)        -- trough at phase 0 (-cos(0) = -1)
+  h.almost(pts[2].time, 0.5)
+  h.almost(pts[2].value, 1, 1e-9)         -- peak at mid-cycle (-cos(pi) = +1)
+  h.almost(pts[3].value, -1, 1e-9)        -- trough again at the cycle end
+end)
+
+-- baseline + amplitude scaling
+h.test("generate scales by amplitude and baseline", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 1 }, {
+    shape = "sine", rate = { mode = "free", cycles = 1 },
+    amplitude = 50, baseline = 64, density = 4,
+  })
+  h.almost(pts[2].value, 114, 1e-6)       -- pts[2] = peak at rel 0.5: 64 + 50*1
+end)
+
+-- random shape holds one value across the whole single cycle
+h.test("generate random is stepped per cycle", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 1 }, {
+    shape = "random", rate = { mode = "free", cycles = 1 },
+    amplitude = 1, baseline = 0, density = 4, seed = 7,
+  })
+  for i = 2, #pts - 1 do h.almost(pts[i].value, pts[1].value) end
+end)
+
+-- fade-in ramps the first point's depth to zero
+h.test("generate honors fade in", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 1 }, {
+    shape = "sine", rate = { mode = "free", cycles = 1 },
+    amplitude = 1, baseline = 0, density = 4, fadeIn = 0.5,
+  })
+  h.almost(pts[1].value, 0, 1e-9)         -- depth 0 at the very start
+end)
+
+-- empty/zero-length span yields no points
+h.test("generate empty span", function()
+  local pts = lfo.generate({ t0 = 2, t1 = 2 }, {
+    shape = "sine", rate = { mode = "free", cycles = 1 },
+  })
+  h.eq(#pts, 0)
+end)
+
+-- last point must equal t1 even when spanLen/dt is not an integer
+-- density=3, cycles=1, span=1s => dt=1/3, n=floor(3.5)=3, n*dt=0.999... < 1.0
+h.test("generate last point equals t1 (non-integer steps)", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 1 }, {
+    shape = "sine", rate = { mode = "free", cycles = 1 },
+    amplitude = 1, baseline = 0, density = 3,
+  })
+  h.almost(pts[#pts].time, 1.0)
+end)
+
+-- A smooth modifier routes a shape through the dense generic sampler and blends it toward
+-- the -cos sine. (NATIVE MATCH: a plain triangle now takes the SPARSE anchored path — extrema
+-- only — so smooth=0 has no 1/8-cycle point to compare; smooth>0 forces the dense path.)
+h.test("generate forwards smooth modifier (blends toward sine)", function()
+  local smoothed = lfo.generate({ t0 = 0, t1 = 1 },
+    { shape = "triangle", rate = { mode = "free", cycles = 1 },
+      amplitude = 1, baseline = 0, density = 8, smooth = 1 })
+  local function valAt(pts, rel)
+    for _, p in ipairs(pts) do if math.abs(p.time - rel) < 1e-6 then return p.value end end
+  end
+  -- at 1/8 cycle a full-smooth triangle equals the -cos sine waveform there.
+  h.almost(valAt(smoothed, 0.125), -math.cos(2 * math.pi * 0.125), 1e-9)
+end)
+
+-- swing=0 must be bit-identical to omitting swing (identity)
+h.test("generate swing=0 is identical to no swing", function()
+  local base = { shape = "sine", rate = { mode = "free", cycles = 4 },
+    amplitude = 50, baseline = 64, density = 8 }
+  local noSwing = lfo.generate({ t0 = 0, t1 = 2 }, base)
+  local withParams = {}
+  for k, v in pairs(base) do withParams[k] = v end
+  withParams.swing = 0
+  local zeroSwing = lfo.generate({ t0 = 0, t1 = 2 }, withParams)
+  h.eq(#zeroSwing, #noSwing)
+  for i = 1, #noSwing do
+    -- bit-identical: exact equality, not approximate
+    h.eq(zeroSwing[i].time, noSwing[i].time)
+    h.eq(zeroSwing[i].value, noSwing[i].value)
+  end
+end)
+
+-- swing=0 helper is a strict identity on cyclePos
+h.test("swingCyclePos swing=0 is exact identity", function()
+  for _, cp in ipairs({ 0, 0.3, 1.0, 1.7, 2.0, 3.49, 5.25 }) do
+    h.eq(lfo.swingCyclePos(cp, 0), cp)
+    h.eq(lfo.swingCyclePos(cp, nil), cp)
+  end
+end)
+
+-- swing>0 shifts where the first cycle ends: the boundary at pair-local 1.0
+-- moves to 1+swing*0.5, so the value sampled at a fixed time differs from swing=0
+h.test("generate swing>0 shifts the cycle boundary", function()
+  local base = { shape = "sawup", rate = { mode = "free", cycles = 4 },
+    amplitude = 1, baseline = 0, density = 8 }
+  local noSwing = lfo.generate({ t0 = 0, t1 = 2 }, base)
+  local swung = {}
+  for k, v in pairs(base) do swung[k] = v end
+  swung.swing = 0.5
+  local swungPts = lfo.generate({ t0 = 0, t1 = 2 }, swung)
+  -- Find a point whose value moved. With swing=0.5 the first cycle is
+  -- stretched, so the sawtooth ramp at a fixed sample time reads differently.
+  local moved = false
+  for i = 1, math.min(#noSwing, #swungPts) do
+    if math.abs(swungPts[i].value - noSwing[i].value) > 1e-6 then
+      moved = true
+      break
+    end
+  end
+  h.truthy(moved, "expected at least one point value to differ under swing>0")
+end)
+
+-- swing must never push values outside baseline +/- amplitude
+h.test("generate swing keeps values within baseline +/- amplitude", function()
+  local base = { shape = "sine", rate = { mode = "free", cycles = 6 },
+    amplitude = 40, baseline = 64, density = 12, swing = 0.8 }
+  local pts = lfo.generate({ t0 = 0, t1 = 3 }, base)
+  h.truthy(#pts > 0)
+  for i = 1, #pts do
+    h.truthy(pts[i].value <= 64 + 40 + 1e-9, "value above baseline+amplitude")
+    h.truthy(pts[i].value >= 64 - 40 - 1e-9, "value below baseline-amplitude")
+  end
+end)
+
+-- Extreme swing (the domain endpoints) must stay bounded within baseline +/- amplitude.
+h.test("generate swing=1 and swing=-1 stay bounded", function()
+  for _, sw in ipairs({ 1, -1 }) do
+    local base = { shape = "sine", rate = { mode = "free", cycles = 6 },
+      amplitude = 40, baseline = 64, density = 12, swing = sw }
+    local pts = lfo.generate({ t0 = 0, t1 = 3 }, base)
+    h.truthy(#pts > 0)
+    for i = 1, #pts do
+      h.truthy(pts[i].value <= 64 + 40 + 1e-9, "swing=" .. sw .. " value above baseline+amplitude")
+      h.truthy(pts[i].value >= 64 - 40 - 1e-9, "swing=" .. sw .. " value below baseline-amplitude")
+    end
+  end
+end)
+
+-- Swing combined with a nonzero phase stays bounded AND differs from swing alone
+-- (phase offset shifts where each warped cycle is sampled).
+h.test("generate swing+phase stays bounded and differs from swing alone", function()
+  local base = { shape = "sine", rate = { mode = "free", cycles = 6 },
+    amplitude = 40, baseline = 64, density = 12, swing = 0.7 }
+  local swingOnly = lfo.generate({ t0 = 0, t1 = 3 }, base)
+
+  local withPhase = {}
+  for k, v in pairs(base) do withPhase[k] = v end
+  withPhase.phase = 0.3
+  local swingPhase = lfo.generate({ t0 = 0, t1 = 3 }, withPhase)
+
+  h.truthy(#swingPhase > 0)
+  for i = 1, #swingPhase do
+    h.truthy(swingPhase[i].value <= 64 + 40 + 1e-9, "swing+phase value above baseline+amplitude")
+    h.truthy(swingPhase[i].value >= 64 - 40 - 1e-9, "swing+phase value below baseline-amplitude")
+  end
+
+  -- The phase offset must actually change the result vs swing alone.
+  local differs = false
+  for i = 1, math.min(#swingOnly, #swingPhase) do
+    if math.abs(swingPhase[i].value - swingOnly[i].value) > 1e-6 then
+      differs = true
+      break
+    end
+  end
+  h.truthy(differs, "expected swing+phase to differ from swing alone")
+end)
+
+-- tilt=0 must be bit-identical to omitting tilt (exact identity)
+h.test("generate tilt=0 is identical to no tilt", function()
+  local base = { shape = "sine", rate = { mode = "free", cycles = 4 },
+    amplitude = 50, baseline = 64, density = 8 }
+  local noTilt = lfo.generate({ t0 = 0, t1 = 2 }, base)
+  local withParams = {}
+  for k, v in pairs(base) do withParams[k] = v end
+  withParams.tilt = 0
+  local zeroTilt = lfo.generate({ t0 = 0, t1 = 2 }, withParams)
+  h.eq(#zeroTilt, #noTilt)
+  for i = 1, #noTilt do
+    h.eq(zeroTilt[i].time, noTilt[i].time)
+    h.eq(zeroTilt[i].value, noTilt[i].value)
+  end
+end)
+
+-- tilt=0 must be bit-identical to omitting tilt for the SQUARE shape too (covers the
+-- explicit-edge generateSquare path, which applies tilt independently of the generic sampler).
+h.test("generate square tilt=0 is identical to no tilt", function()
+  local base = { shape = "square", rate = { mode = "free", cycles = 4 },
+    amplitude = 50, baseline = 64, density = 2 }
+  local noTilt = lfo.generate({ t0 = 0, t1 = 2 }, base)
+  local withParams = {}
+  for k, v in pairs(base) do withParams[k] = v end
+  withParams.tilt = 0
+  local zeroTilt = lfo.generate({ t0 = 0, t1 = 2 }, withParams)
+  h.eq(#zeroTilt, #noTilt)
+  for i = 1, #noTilt do
+    h.eq(zeroTilt[i].time, noTilt[i].time)
+    h.eq(zeroTilt[i].value, noTilt[i].value)
+  end
+end)
+
+-- tilt>0 leaves the FIRST point (rel=0, anchored left) unchanged but raises a
+-- later point (the right side tilts up).
+h.test("generate tilt>0 anchors left and raises right", function()
+  local base = { shape = "sine", rate = { mode = "free", cycles = 4 },
+    amplitude = 50, baseline = 64, density = 8 }
+  local noTilt = lfo.generate({ t0 = 0, t1 = 2 }, base)
+  local up = {}
+  for k, v in pairs(base) do up[k] = v end
+  up.tilt = 0.5
+  local upPts = lfo.generate({ t0 = 0, t1 = 2 }, up)
+  -- first point (rel=0): tilt offset is amp*tilt*0 = 0 -> unchanged
+  h.almost(upPts[1].value, noTilt[1].value, 1e-9)
+  -- last point (rel=1): tilt offset is amp*tilt*1 = 50*0.5 = 25 above no-tilt
+  h.almost(upPts[#upPts].value - noTilt[#noTilt].value, 25, 1e-6)
+  h.truthy(upPts[#upPts].value > noTilt[#noTilt].value, "right side must be higher")
+end)
+
+-- tilt<0 lowers the right side while still anchoring the left.
+h.test("generate tilt<0 lowers right", function()
+  local base = { shape = "sine", rate = { mode = "free", cycles = 4 },
+    amplitude = 50, baseline = 64, density = 8 }
+  local noTilt = lfo.generate({ t0 = 0, t1 = 2 }, base)
+  local down = {}
+  for k, v in pairs(base) do down[k] = v end
+  down.tilt = -0.5
+  local downPts = lfo.generate({ t0 = 0, t1 = 2 }, down)
+  h.almost(downPts[1].value, noTilt[1].value, 1e-9)            -- left anchored
+  h.almost(downPts[#downPts].value - noTilt[#noTilt].value, -25, 1e-6)
+  h.truthy(downPts[#downPts].value < noTilt[#noTilt].value, "right side must be lower")
+end)
+
+-- NATIVE MATCH: a default square (phase 0, pw 0.5) starts LOW at the cycle start and steps
+-- UP at cycle-fraction (1 - pulseWidth) — the HIGH portion is the LAST pw of each cycle
+-- (native CC4 begins at the trough; our old emitter started HIGH, the user-reported bug).
+-- The step CC shape holds each value forward, so there is NO trailing point at t1.
+h.test("square starts low and steps up at (1-pulseWidth) [native]", function()
+  -- 2 cycles over [0,2]: cycleLen=1. Edges: t0(LOW), 0.5(HIGH), 1.0(LOW), 1.5(HIGH).
+  local pts = lfo.generate({ t0 = 0, t1 = 2 }, {
+    shape = "square", rate = { mode = "free", cycles = 2 },
+    amplitude = 1, baseline = 0, density = 2,
+  })
+  h.almost(pts[1].time, 0)
+  h.almost(pts[1].value, -1, 1e-9)   -- starts LOW (native begins at the trough)
+  local function valueAt(t)
+    for _, p in ipairs(pts) do if math.abs(p.time - t) < 1e-6 then return p.value end end
+    return nil
+  end
+  h.almost(valueAt(0.5), 1, 1e-9)    -- steps UP at the (1-pw)=0.5 boundary
+  h.almost(valueAt(1.0), -1, 1e-9)   -- next cycle starts low
+  h.almost(valueAt(1.5), 1, 1e-9)
+  h.truthy(pts[#pts].time < 2.0, "no trailing t1 point: the step shape holds to the end")
+end)
+
+-- NATIVE MATCH: the HIGH edge tracks pulseWidth (HIGH = the last pw of the cycle).
+h.test("square HIGH edge tracks pulseWidth", function()
+  -- 1 cycle over [0,1], pw=0.25: LOW on [0,0.75), HIGH on [0.75,1).
+  local pts = lfo.generate({ t0 = 0, t1 = 1 }, {
+    shape = "square", rate = { mode = "free", cycles = 1 },
+    amplitude = 1, baseline = 0, density = 2, pulseWidth = 0.25,
+  })
+  local function valueAt(t)
+    for _, p in ipairs(pts) do if math.abs(p.time - t) < 1e-6 then return p.value end end
+    return nil
+  end
+  h.almost(pts[1].value, -1, 1e-9)       -- starts LOW
+  h.almost(valueAt(0.75), 1, 1e-9)       -- steps up exactly at (1-pw)
+  h.eq(valueAt(0.5), nil)                -- no edge at 0.5 for a single cycle
+end)
+
+-- phase offset shifts the square edges in time but keeps it crisp (+1/-1 only) and bounded.
+h.test("square with phase stays crisp and bounded", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 2 }, {
+    shape = "square", rate = { mode = "free", cycles = 2 },
+    amplitude = 40, baseline = 64, density = 2, phase = 0.25,
+  })
+  h.truthy(#pts >= 2)
+  for _, p in ipairs(pts) do
+    -- every value is either baseline+amp or baseline-amp (no in-between => crisp)
+    local hi = math.abs(p.value - (64 + 40)) < 1e-6
+    local lo = math.abs(p.value - (64 - 40)) < 1e-6
+    h.truthy(hi or lo, "square value must be exactly high or low (crisp)")
+  end
+  h.almost(pts[1].time, 0)
+end)
+
+-- square respects global tilt (the right side drifts) while edges stay crisp steps.
+h.test("square + tilt: starts low, right side drifts up, edges crisp", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 2 }, {
+    shape = "square", rate = { mode = "free", cycles = 2 },
+    amplitude = 40, baseline = 64, density = 2, tilt = 0.5,
+  })
+  -- first point (rel=0): LOW, no tilt offset -> 64-40 = 24 (native starts at the trough)
+  h.almost(pts[1].value, 64 - 40, 1e-6)
+  -- last point is the HIGH edge at rel 0.75 (t=1.5): 64 + 40 + (40*0.5)*0.75 = 119
+  h.almost(pts[#pts].value, 64 + 40 + (40 * 0.5) * 0.75, 1e-6)
+end)
+
+-- A freqSkew-warped square stays CRISP (hard steps) on the explicit-edge emitter — the edges
+-- warp in time but the values remain exactly high/low (the old behavior fell to the generic
+-- sampler with an INVERTED waveform; the user-reported "square freq skew broken"). Edges must
+-- also be non-uniformly spaced (the warp bunches them).
+h.test("square with freqSkew stays crisp, bounded, and warped", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 2 }, {
+    shape = "square", rate = { mode = "free", cycles = 2 },
+    amplitude = 40, baseline = 64, density = 8, freqSkew = 0.5,
+  })
+  h.truthy(#pts >= 4, "explicit edges (LOW/HIGH per cycle) + start anchor")
+  for _, p in ipairs(pts) do
+    local hi = math.abs(p.value - (64 + 40)) < 1e-6
+    local lo = math.abs(p.value - (64 - 40)) < 1e-6
+    h.truthy(hi or lo, "value must stay exactly high or low (crisp) under freqSkew")
+  end
+  -- Warp => edge TIMES shift vs the un-skewed square (which has its first HIGH step at t=0.5).
+  local function firstHigh(ps)
+    for _, p in ipairs(ps) do if math.abs(p.value - 104) < 1e-6 then return p.time end end
+  end
+  local flat = lfo.generate({ t0 = 0, t1 = 2 }, {
+    shape = "square", rate = { mode = "free", cycles = 2 },
+    amplitude = 40, baseline = 64, density = 8, freqSkew = 0,
+  })
+  h.truthy(math.abs(firstHigh(pts) - firstHigh(flat)) > 1e-3, "freqSkew must warp the edge times")
+end)
+
+-- NATIVE per-point CC interpolation shapes (read from dumps CC30/CC31): Sine = slow start/end (2)
+-- on every point; Parametric = fast end (4) at extrema, fast start (3) at the mid/zero-crossings.
+h.test("native per-point shapes: sine=slow start/end, parametric=fast-end/fast-start", function()
+  local sine = lfo.generate({ t0 = 0, t1 = 1 },
+    { shape = "sine", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0 })
+  for _, p in ipairs(sine) do h.eq(p.shape, 2) end
+  local para = lfo.generate({ t0 = 0, t1 = 1 },
+    { shape = "parametric", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0 })
+  for _, p in ipairs(para) do
+    if math.abs(math.abs(p.value) - 1) < 1e-6 then
+      h.eq(p.shape, 4)                       -- extremum (value +/-1) -> fast end
+    elseif math.abs(p.value) < 1e-6 then
+      h.eq(p.shape, 3)                       -- mid/zero-cross (value 0) -> fast start
+    end
+  end
+  -- triangle = linear, square = step, saw = linear:
+  local tri = lfo.generate({ t0 = 0, t1 = 1 }, { shape = "triangle", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0 })
+  for _, p in ipairs(tri) do h.eq(p.shape, 1) end
+  local sq = lfo.generate({ t0 = 0, t1 = 1 }, { shape = "square", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0 })
+  for _, p in ipairs(sq) do h.eq(p.shape, 0) end
+end)
+
+-- Saw stays SPARSE under freqSkew (warped ramp, not densely sampled) — user-reported regression.
+h.test("saw with freqSkew stays sparse and linear", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 1 },
+    { shape = "saw", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, freqSkew = 0.5 })
+  h.truthy(#pts <= 6, "saw must stay sparse under freqSkew (got " .. #pts .. ")")
+  for _, p in ipairs(pts) do h.eq(p.shape, 1) end
+  -- the middle reset boundary must have moved off the un-skewed 0.5 (warp applied):
+  local flat = lfo.generate({ t0 = 0, t1 = 1 },
+    { shape = "saw", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, freqSkew = 0 })
+  h.truthy(math.abs(pts[2].time - flat[2].time) > 1e-3, "freqSkew must warp the saw boundary")
+end)
+
+-- Saw RESPONDS to swing (the reset boundary shuffles long-short) while staying SPARSE — the user
+-- reported swing stopped affecting saw after it was made warp-aware.
+h.test("saw with swing stays sparse and shifts the reset boundary", function()
+  local base = { shape = "saw", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0 }
+  local flat = lfo.generate({ t0 = 0, t1 = 1 }, base)
+  local sw = {}; for k, v in pairs(base) do sw[k] = v end; sw.swing = 0.5
+  local swung = lfo.generate({ t0 = 0, t1 = 1 }, sw)
+  h.truthy(#swung <= 6, "saw stays sparse under swing (got " .. #swung .. ")")
+  -- pts[2] is the first peak (reset boundary); swing must move it off 0.5.
+  h.truthy(math.abs(swung[2].time - flat[2].time) > 1e-3, "swing must shift the saw boundary")
+end)
+
+h.run()
