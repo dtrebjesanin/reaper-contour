@@ -368,16 +368,17 @@ function CC:writeBulk(snapshot, points, t0, t1, opts)
       error("MIDI_SetAllEvts rejected the event buffer")
     end
 
-    -- The flags nibble (midistream) renders STEP (0) and LINEAR (1) directly. CURVE shapes
-    -- (slow/fast start/end, bezier — int >= 2) draw as straight lines from the nibble alone, so
-    -- they're applied via MIDI_SetCCShape. We only run that pass when a curve point is actually
-    -- present, so the common linear/step shapes (Triangle/Saw/Square) skip the scan and stay
-    -- smooth in Live. No MarkTrackItemsDirty here, so no per-frame arrange-overview FLASH.
-    local needCurve = false
+    -- The flags nibble alone renders only STEP (0) correctly in the live MIDI_SetAllEvts path;
+    -- LINEAR (1) and the CURVE shapes (>= 2) draw as STEPS until MIDI_SetCCShape is applied (the
+    -- user-reported "saw / pump look like squares in live"). So run the shape pass whenever ANY point
+    -- is non-step (>= 1); an all-step shape (Square) still skips it. The commit path (:write) already
+    -- applies shapes unconditionally, so this just makes Live match the committed result. No
+    -- MarkTrackItemsDirty here, so still no per-frame arrange-overview FLASH.
+    local needShapes = false
     for _, pt in ipairs(points) do
-      if (pt.shape or 1) >= 2 then needCurve = true; break end
+      if (pt.shape or 1) >= 1 then needShapes = true; break end
     end
-    if needCurve then
+    if needShapes then
       applyPointShapes(take, chan, writeLane, ppq0, ppq1, points)
     end
 
