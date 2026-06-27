@@ -33,7 +33,7 @@ local function amountFor(pct) local f = (pct or 0) / 100; return f * f * MAX_AMO
 
 local function ui(state)
   if not state.red then
-    state.red = { amount = 0, scope = SCOPE_TIMESEL, live = true, status = "", statusErr = false }
+    state.red = { amount = 0, scope = SCOPE_TIMESEL, live = true, status = "", statusErr = false, curveFit = false }
   end
   return state.red
 end
@@ -134,12 +134,19 @@ local function reducedAt(g)
   if (g.amount or 0) <= 0 then return pts end
   local vmin, vmax = base.tgt:valueRange()
   local eps = amountFor(g.amount)
+  local vr = { vmin = vmin, vmax = vmax }
+  local function thin(p)
+    if g.curveFit then
+      return reduce.thinCurve(p, eps, vr, { envConvention = base.tgt:kind() ~= "cc" })
+    end
+    return reduce.thin(p, eps, vr)
+  end
   if not base.selectedMode then
-    return reduce.thin(pts, eps, { vmin = vmin, vmax = vmax })
+    return thin(pts)
   end
   local sel, unsel = {}, {}
   for _, p in ipairs(pts) do if p.sel then sel[#sel + 1] = p else unsel[#unsel + 1] = p end end
-  local keptSel = reduce.thin(sel, eps, { vmin = vmin, vmax = vmax })
+  local keptSel = thin(sel)
   local merged = {}
   for _, p in ipairs(unsel) do merged[#merged + 1] = p end
   for _, p in ipairs(keptSel) do merged[#merged + 1] = p end
@@ -227,6 +234,13 @@ function M.draw(ctx, state, detected)
     if choices[cur + 1].v ~= g.scope then g.scope = choices[cur + 1].v end  -- snap if prev scope invalid here
     local changed, idx = reaper.ImGui_Combo(ctx, "Scope##red_scope", cur, items, #items)
     if changed and choices[idx + 1] and choices[idx + 1].v ~= g.scope then g.scope = choices[idx + 1].v; acc(true) end
+  end
+
+  -- Curve fit: thin using curved segments (REAPER per-point shapes) instead of straight lines, so a
+  -- curve keeps its shape with far fewer points. Off = exact straight-line reduction.
+  do
+    local rv, v = reaper.ImGui_Checkbox(ctx, "Curve fit##red_curve", g.curveFit)
+    if rv then g.curveFit = v; acc(true) end
   end
 
   -- Reduction amount (0 = restore original; raise to thin). Notch + label double-click reset.
