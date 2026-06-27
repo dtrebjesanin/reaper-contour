@@ -335,6 +335,33 @@ local function generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew,
   return pts
 end
 
+-- Random (Sample & Hold) and Drift (smooth random) share one emitter: one random value per cycle
+-- (shapes.randomAt(seed, cycleIndex)). They differ only in interpolation between cycle values:
+-- S&H holds flat (step CC shape 0); Drift eases (slow start/end CC shape 2). Sparse: one anchor per
+-- cycle start + an end anchor. Honors amplitude/amp-skew/tilt/fade; freq-skew/swing are not applied
+-- (no musical meaning for held random). smoothInterp=true selects Drift.
+local function generateRandom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset, smoothInterp)
+  local seed = p.seed or 0
+  local N = totalCycles
+  local ccShape = smoothInterp and 2 or 0
+  local function emit(pts, rel, cyc)
+    if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
+    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
+    local half = ampHalf(amp, ampSkew, rel)
+    local sv = shapes.randomAt(seed, cyc)
+    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = ccShape }
+  end
+  local pts = {}
+  local c = 0
+  while c / N < 1 - 1e-9 do
+    emit(pts, c / N, c)
+    c = c + 1
+  end
+  -- End anchor: Drift eases toward the NEXT target (cyc=c); S&H holds the LAST value (cyc=c-1).
+  emit(pts, 1, smoothInterp and c or math.max(0, c - 1))
+  return pts
+end
+
 function M.generate(span, params)
   local t0, t1 = span.t0, span.t1
   local spanLen = t1 - t0
@@ -364,6 +391,15 @@ function M.generate(span, params)
 
   -- Total cycle count over the selection (preserved by the freq-skew warp).
   local totalCycles = spanLen / cycleLen
+
+  -- Random / Drift: dedicated sparse emitters (one random value per cycle). Selected up front so
+  -- Steps/Smooth never reroute them (held random doesn't smooth/quantize meaningfully here).
+  if p.shape == "random" then
+    return generateRandom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset, false)
+  end
+  if p.shape == "drift" then
+    return generateRandom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset, true)
+  end
 
   -- ---------------------------------------------------------------------------
   -- ANCHORED native shapes (SINE / TRIANGLE / PARAMETRIC): sparse extremum (+ quarter-
@@ -402,12 +438,7 @@ function M.generate(span, params)
     local cyclePos = M.swingCyclePos(warpedCycles - phase, swing)
     local cyc = floor(cyclePos)
     local tInCycle = cyclePos - cyc
-    local sv
-    if p.shape == "random" then
-      sv = shapes.randomAt(seed, cyc)
-    else
-      sv = shapes.value(p.shape, tInCycle, p)
-    end
+    local sv = shapes.value(p.shape, tInCycle, p)
     sv = M.quantizeBipolar(sv, p.quantizeSteps)
     local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
     local half = ampHalf(amp, ampSkew, rel)

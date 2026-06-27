@@ -434,4 +434,27 @@ h.test("saw with swing stays sparse and shifts the reset boundary", function()
   h.truthy(math.abs(swung[2].time - flat[2].time) > 1e-3, "swing must shift the saw boundary")
 end)
 
+-- Random (S&H): one value per cycle, held flat (step CC shape 0); values differ non-monotonically.
+h.test("random S&H: per-cycle held random values, step shape", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 4 },
+    { shape = "random", rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0, seed = 7 })
+  h.truthy(#pts >= 4, "at least one point per cycle")
+  for _, p in ipairs(pts) do h.eq(p.shape, 0, "S&H uses step interpolation") end
+  -- not a monotonic ramp: at least one direction change across the cycle values
+  local ups, downs = 0, 0
+  for i = 2, #pts do if pts[i].value > pts[i-1].value then ups = ups + 1 elseif pts[i].value < pts[i-1].value then downs = downs + 1 end end
+  h.truthy(ups > 0 and downs > 0, "random should go both up and down")
+end)
+
+-- Drift: same per-cycle random targets as Random, but smooth (slow start/end CC shape 2).
+h.test("drift: smooth-interp random (slow shape)", function()
+  local r = lfo.generate({ t0 = 0, t1 = 4 },
+    { shape = "random", rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0, seed = 7 })
+  local d = lfo.generate({ t0 = 0, t1 = 4 },
+    { shape = "drift",  rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0, seed = 7 })
+  for _, p in ipairs(d) do h.eq(p.shape, 2, "drift uses slow start/end interpolation") end
+  -- same seed => the per-cycle anchor values match Random's (first 4 cycle starts)
+  for i = 1, 4 do h.almost(d[i].value, r[i].value, 1e-9) end
+end)
+
 h.run()
