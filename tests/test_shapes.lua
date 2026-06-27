@@ -64,7 +64,7 @@ h.test("randomAt deterministic in range", function()
   local a = shapes.randomAt(42, 3)
   local b = shapes.randomAt(42, 3)
   h.eq(a, b)
-  h.truthy(a >= -1 and a <= 1, "in [-1,1]")
+  h.truthy(a >= -1 and a < 1, "in [-1,1)")
 end)
 
 -- different cycle index generally differs

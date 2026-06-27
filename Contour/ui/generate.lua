@@ -221,7 +221,7 @@ local function ui(state)
       -- Waveform shaping (native-CC-LFO parity + extras)
       phase     = DEFAULTS.phase,     -- 0..100 slider units (phase/100 cycles; 100 = one full cycle)
       ampSkew   = DEFAULTS.ampSkew,   -- -100..100 % (global amplitude ramp)
-      pulseWidth= DEFAULTS.pulseWidth,-- 0..1 (square only, shown always)
+      pulseWidth= DEFAULTS.pulseWidth,-- 0..1 (square only)
       freqSkew  = DEFAULTS.freqSkew,  -- -100..100 % (global phase time-warp)
       tilt      = DEFAULTS.tilt,      -- -100..100 % (global full-range drift)
       swing     = DEFAULTS.swing,     -- -1..1

@@ -370,7 +370,7 @@ local function generatePump(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew
   local curve = max(0, min(1, (p.curve or 0) / 100))
   local tension = curve * 0.9
   local rampShape = (curve > 1e-9) and 5 or 1   -- bezier when curved, else linear
-  local eps = 1e-4
+  local eps = math.min(1e-4, 0.25 / N)
   local function emit(pts, rel, sv, shp, ten)
     if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
     local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
@@ -492,7 +492,7 @@ function M.generate(span, params)
     return generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   end
 
-  -- Generic ppc sampler (legacy sawup/sawdown, random, smooth/quantized, warped shapes).
+  -- Generic ppc sampler (legacy sawup/sawdown, smooth/quantized, warped shapes).
   -- Flows through the GLOBAL value model: amp-skew ramp on the half-amplitude, freq-skew
   -- phase warp on the cycle position, value-unit tilt offset. PHASE is subtracted (native
   -- delays for +phase: shape-phase = totalCycles*warp(rel) - phase), consistent with

@@ -25,26 +25,34 @@ local function params(base, extra)
   return p
 end
 
-for _, c in ipairs(CASES) do
-  h.test(c.name .. ": amp/freq skew does not densify (point count stable)", function()
-    local plain  = lfo.generate(SPAN, params(c.p))
-    local skewed = lfo.generate(SPAN, params(c.p, { freqSkew = 0.8, ampSkew = 0.7 }))
-    h.eq(#skewed, #plain, c.name .. " point count changed under skew")
+-- checkCase runs both invariant checks for a single shape case at the given cycle count.
+local function checkCase(c, cycles)
+  local tag = c.name .. " (cycles=" .. tostring(cycles) .. ")"
+
+  h.test(tag .. ": amp/freq skew does not densify (point count stable)", function()
+    local plain  = lfo.generate(SPAN, params(c.p, { rate = { mode = "free", cycles = cycles } }))
+    local skewed = lfo.generate(SPAN, params(c.p, { rate = { mode = "free", cycles = cycles }, freqSkew = 0.8, ampSkew = 0.7 }))
+    h.eq(#skewed, #plain, tag .. " point count changed under skew")
   end)
 
-  h.test(c.name .. ": clean point set (endpoints, strictly increasing, finite)", function()
-    local pts = lfo.generate(SPAN, params(c.p))
-    h.truthy(#pts >= 2, c.name .. " produced too few points")
-    h.almost(pts[1].time,    SPAN.t0, 1e-9, c.name .. " first point not at t0")
-    h.almost(pts[#pts].time, SPAN.t1, 1e-9, c.name .. " last point not at t1")
+  h.test(tag .. ": clean point set (endpoints, strictly increasing, finite)", function()
+    local pts = lfo.generate(SPAN, params(c.p, { rate = { mode = "free", cycles = cycles } }))
+    h.truthy(#pts >= 2, tag .. " produced too few points")
+    h.almost(pts[1].time,    SPAN.t0, 1e-9, tag .. " first point not at t0")
+    h.almost(pts[#pts].time, SPAN.t1, 1e-9, tag .. " last point not at t1")
     for i = 1, #pts do
       local v = pts[i].value
-      h.truthy(v == v and v ~= math.huge and v ~= -math.huge, c.name .. " non-finite value")
+      h.truthy(v == v and v ~= math.huge and v ~= -math.huge, tag .. " non-finite value")
       if i > 1 then
-        h.truthy(pts[i].time > pts[i-1].time, c.name .. " times not strictly increasing (stray/dup/folded)")
+        h.truthy(pts[i].time > pts[i-1].time, tag .. " times not strictly increasing (stray/dup/folded)")
       end
     end
   end)
+end
+
+for _, c in ipairs(CASES) do
+  checkCase(c, 4)
+  checkCase(c, 2.5)
 end
 
 h.run()
