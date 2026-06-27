@@ -457,36 +457,6 @@ h.test("drift: smooth-interp random (slow shape)", function()
   for i = 1, 4 do h.almost(d[i].value, r[i].value, 1e-9) end
 end)
 
--- Pump: per cycle a duck (-1) at the start that recovers to peak (+1); 2 cycles over the span =>
--- two duck->recover ramps. Curve>0 => the duck point carries a bezier shape (5).
-h.test("pump: duck then recover per cycle", function()
-  local pts = lfo.generate({ t0 = 0, t1 = 4 },
-    { shape = "pump", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, curve = 60 })
-  h.almost(pts[1].value, -1, 1e-9)          -- starts ducked
-  h.eq(pts[1].shape, 5, "curved recovery uses bezier")
-  -- somewhere a recovered peak (+1) exists before each re-duck
-  local sawPeak = false
-  for _, p in ipairs(pts) do if p.value > 0.99 then sawPeak = true end end
-  h.truthy(sawPeak, "recovers to full")
-end)
-h.test("pump curve=0 is linear recovery", function()
-  local pts = lfo.generate({ t0 = 0, t1 = 4 },
-    { shape = "pump", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, curve = 0 })
-  h.eq(pts[1].shape, 1, "no curve => linear")
-end)
-
--- AD: rise to a peak at the Attack fraction, then decay. 1 cycle over a span of length 1, attack=25%
--- => the peak (+1) point sits near t=0.25.
-h.test("ad: peak lands at the attack fraction", function()
-  local pts = lfo.generate({ t0 = 0, t1 = 1 },
-    { shape = "ad", rate = { mode = "free", cycles = 1 }, amplitude = 1, baseline = 0, attack = 25, curve = 50 })
-  h.almost(pts[1].value, -1, 1e-9)             -- starts at trough
-  local peakT
-  for _, p in ipairs(pts) do if p.value > 0.99 then peakT = p.time end end
-  h.truthy(peakT ~= nil, "has a peak")
-  h.almost(peakT, 0.25, 1e-6)                  -- peak at the attack fraction
-end)
-
 -- Saw Down: descending ramp, SPARSE like Saw Up (dedicated emitter, not the dense sampler).
 h.test("saw down is sparse and descends", function()
   local pts = lfo.generate({ t0 = 0, t1 = 4 },
@@ -605,19 +575,6 @@ h.test("smooth rounds a square", function()
   local mid = false
   for _, p in ipairs(pts) do if math.abs(p.value) < 0.9 then mid = true; break end end
   h.truthy(mid, "smoothed square should have intermediate values")
-end)
-
--- AD / Pump Curve is BIPOLAR: +curve and -curve bend the ease opposite ways (bezier tension sign
--- flips); curve 0 stays linear.
-h.test("ad/pump curve bends both directions", function()
-  local function firstBezierTension(shape, curve)
-    local pts = lfo.generate({ t0 = 0, t1 = 2 },
-      { shape = shape, rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, curve = curve, attack = 50 })
-    for _, p in ipairs(pts) do if p.shape == 5 then return p.tension end end
-  end
-  h.truthy(firstBezierTension("ad", 50) > 0 and firstBezierTension("ad", -50) < 0, "AD curve opposite signs")
-  h.truthy(firstBezierTension("ad", 0) == nil, "AD curve 0 is linear (no bezier point)")
-  h.truthy(firstBezierTension("pump", 50) > 0 and firstBezierTension("pump", -50) < 0, "Pump curve opposite signs")
 end)
 
 -- Saw Curve: the RAMP bends (bezier), the RESET stays instant (linear). Curve 0 = native saw.

@@ -14,8 +14,6 @@ local CASES = {
   { name = "sine2",     p = { shape = "sine2" } },
   { name = "random",    p = { shape = "random", seed = 7 } },
   { name = "drift",     p = { shape = "drift",  seed = 7 } },
-  { name = "pump",      p = { shape = "pump",  curve = 50 } },
-  { name = "ad",        p = { shape = "ad",    curve = 50, attack = 30 } },
 }
 
 local function params(base, extra)

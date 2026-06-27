@@ -31,8 +31,6 @@ local SHAPES = {
   { id = "parametric", label = "Parametric" },
   { id = "rectsine",   label = "Rectified sine" },
   { id = "sine2",      label = "Sine\xc2\xb2" },     -- "Sine²" (UTF-8 superscript two)
-  { id = "pump",       label = "Pump" },
-  { id = "ad",         label = "AD" },
   { id = "random",     label = "Random (S&H)" },
   { id = "drift",      label = "Drift" },
 }
@@ -120,9 +118,6 @@ local SHAPE_OUTPUT = {
   trapezoid  = { ppc = 8,  ccShape = 1 },   -- 4-corner sparse emitter
   rectsine   = { ppc = 8,  ccShape = 1 },   -- |sin| humps: 4-anchor emitter (fast-start/fast-end)
   sine2      = { ppc = 4,  ccShape = 2 },   -- peakier sine: 4-anchor emitter (slow start/end)
-  -- Dedicated emitters tag their own per-point shapes; ppc/ccShape here are inert fallbacks:
-  pump       = { ppc = 2,  ccShape = 1 },
-  ad         = { ppc = 2,  ccShape = 1 },
   random     = { ppc = 1,  ccShape = 0 },
   drift      = { ppc = 1,  ccShape = 2 },
 }
@@ -657,9 +652,9 @@ function M.draw(ctx, state, detected)
   do
     local changed
     local sid = currentShapeId(g)
-    -- Pump / AD / Random / Drift use dedicated emitters that ignore Phase, Freq skew, Swing and the
+    -- Random / Drift use dedicated emitters that ignore Phase, Freq skew, Swing and the
     -- Steps / Smooth modifiers — hide those controls for them so the panel shows only what has effect.
-    local special = (sid == "pump" or sid == "ad" or sid == "random" or sid == "drift")
+    local special = (sid == "random" or sid == "drift")
     -- Phase 0..100 slider units (phase/100 cycles; 100 = one full cycle), converted in buildParams.
     -- All shaping faders: double-click snaps to the notch (default).
     if not special then
@@ -680,14 +675,13 @@ function M.draw(ctx, state, detected)
       changed, g.edge = reaper.ImGui_SliderInt(ctx, "Edge##gen_edge", g.edge, 0, 100, "%d")
       acc(changed); acc(tickReset(ctx, g, "edge", 0, 100, 50))
     end
-    -- Attack for AD + Triangle (peak position, % of cycle).
-    if currentShapeId(g) == "ad" or currentShapeId(g) == "triangle" then
+    -- Attack for Triangle (peak position, % of cycle).
+    if currentShapeId(g) == "triangle" then
       changed, g.attack = reaper.ImGui_SliderInt(ctx, "Attack##gen_attack", g.attack, 1, 99, "%d")
       acc(changed); acc(tickReset(ctx, g, "attack", 1, 99, 50))
     end
-    -- Curve for Pump + AD + Saw Up/Down + Triangle (ease steepness). Bipolar: 0 = linear.
-    if currentShapeId(g) == "pump" or currentShapeId(g) == "ad"
-       or currentShapeId(g) == "saw" or currentShapeId(g) == "sawdown" or currentShapeId(g) == "triangle" then
+    -- Curve for Saw Up/Down + Triangle (ease steepness). Bipolar: 0 = linear, + one way, - the other.
+    if currentShapeId(g) == "saw" or currentShapeId(g) == "sawdown" or currentShapeId(g) == "triangle" then
       changed, g.curve = reaper.ImGui_SliderInt(ctx, "Curve##gen_curve", g.curve, -100, 100, "%d")
       acc(changed); acc(tickReset(ctx, g, "curve", -100, 100, 0))
     end
