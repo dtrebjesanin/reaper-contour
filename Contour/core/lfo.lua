@@ -314,11 +314,16 @@ local function generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew,
   local eps = 1e-4                             -- ~1 tick reset gap (the writer snaps to the grid)
   local lo, hi = -1, 1                         -- Saw Up: trough -> peak
   if desc then lo, hi = 1, -1 end              -- Saw Down: peak -> trough
-  local function emit(pts, rel, sv)
+  -- CURVE: bend the RAMP via a bezier CC shape on the ramp-start points; the reset (peak) stays
+  -- linear so the drop is instant. Bipolar tension; curve 0 -> linear (byte-identical native saw).
+  local curve = max(-1, min(1, (p.curve or 0) / 100))
+  local tension = curve * 0.9
+  local rampShape = (abs(curve) > 1e-9) and 5 or 1
+  local function emit(pts, rel, sv, shp, ten)
     if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
     local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
     local half = ampHalf(amp, ampSkew, rel)
-    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = 1 }
+    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = shp, tension = ten }
   end
   -- Ramp value at cycle-position cp: PHASE shifts the waveform (shape-phase = cp - phase); each cycle
   -- ramps lo -> hi. Used for the partial values at the span edges.
@@ -328,23 +333,23 @@ local function generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew,
   -- rampVal(0)=lo make the whole emitter byte-identical to the native saw.
   local function resetCP(j) return (j % 2 == 1) and (j + phase + swing * 0.5) or (j + phase) end
   local pts = {}
-  emit(pts, 0, rampVal(0))                     -- partial ramp value at the span start (lo when phase=0)
-  local j = (phase > 1e-9) and 0 or 1          -- phase>0 can place a reset inside the first cycle
+  emit(pts, 0, rampVal(0), rampShape, tension)  -- partial ramp value at the span start (lo when phase=0)
+  local j = (phase > 1e-9) and 0 or 1           -- phase>0 can place a reset inside the first cycle
   while true do
     local prog = resetCP(j) / N
     if prog >= 1 - 1e-9 then break end
     if prog > 1e-9 then
       local relB = M.freqWarpInverse(prog, freqSkew)
-      emit(pts, relB, hi)                       -- ramp end (peak)
-      emit(pts, relB + eps, lo)                -- reset (next trough)
+      emit(pts, relB, hi, 1, 0)                  -- ramp end (peak) -> reset stays linear/instant
+      emit(pts, relB + eps, lo, rampShape, tension)  -- reset (next ramp start) -> curved
     end
     j = j + 1
   end
   -- Final point at the span end = the partial ramp value at the SWUNG, phase-shifted end position
-  -- (a whole cycle -> hi, the ramp peak; a partial cycle -> interpolated lo->hi).
+  -- (a whole cycle -> hi, the ramp peak; a partial cycle -> interpolated lo->hi). No outgoing segment.
   local endCP = M.swingCyclePos(N, swing) - phase
   local fracEnd = endCP - floor(endCP)
-  emit(pts, 1, (fracEnd < 1e-9) and hi or (lo + (hi - lo) * fracEnd))
+  emit(pts, 1, (fracEnd < 1e-9) and hi or (lo + (hi - lo) * fracEnd), 1, 0)
   return pts
 end
 

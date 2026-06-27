@@ -620,4 +620,35 @@ h.test("ad/pump curve bends both directions", function()
   h.truthy(firstBezierTension("pump", 50) > 0 and firstBezierTension("pump", -50) < 0, "Pump curve opposite signs")
 end)
 
+-- Saw Curve: the RAMP bends (bezier), the RESET stays instant (linear). Curve 0 = native saw.
+h.test("saw curve bends the ramp, reset stays linear", function()
+  local function gen(curve)
+    return lfo.generate({ t0 = 0, t1 = 4 },
+      { shape = "saw", rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0, curve = curve })
+  end
+  for _, p in ipairs(gen(0)) do h.eq(p.shape, 1, "curve 0 -> all linear") end
+  local hasBez, peaksLinear = false, true
+  for _, p in ipairs(gen(60)) do
+    if math.abs(p.value - (-1)) < 1e-6 then               -- ramp-start (trough)
+      if p.shape == 5 and (p.tension or 0) > 0 then hasBez = true end
+    elseif math.abs(p.value - 1) < 1e-6 then               -- peak (reset point)
+      if p.shape ~= 1 then peaksLinear = false end
+    end
+  end
+  h.truthy(hasBez, "ramp-start points should be bezier with +tension")
+  h.truthy(peaksLinear, "peak points stay linear (instant reset)")
+end)
+
+-- Curve must not change the point count (no densify) and works for saw down too.
+h.test("saw curve keeps point count; saw down curves as well", function()
+  local function gen(shape, curve)
+    return lfo.generate({ t0 = 0, t1 = 4 },
+      { shape = shape, rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0, curve = curve })
+  end
+  h.eq(#gen("saw", 0), #gen("saw", 60), "curve must not change saw point count")
+  local bez = false
+  for _, p in ipairs(gen("sawdown", -60)) do if p.shape == 5 and (p.tension or 0) < 0 then bez = true end end
+  h.truthy(bez, "saw down curve -> bezier points with -tension")
+end)
+
 h.run()
