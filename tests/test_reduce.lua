@@ -56,4 +56,57 @@ h.test("thin maps amount through value range", function()
   h.eq(#out, 2)
 end)
 
+-- ── Curve fit (thinCurve) ────────────────────────────────────────────────────
+local function arc(n, ease)   -- n samples of an easing curve over [0,1] x [0,1]
+  local t = {}
+  for i = 0, n - 1 do local x = i / (n - 1); t[#t + 1] = { time = x, value = ease(x) } end
+  return t
+end
+local slowEase  = function(x) return (1 - math.cos(math.pi * x)) / 2 end
+local fastStart = function(x) return math.sin(math.pi * x / 2) end
+local fastEnd   = function(x) return 1 - math.cos(math.pi * x / 2) end
+
+h.test("thinCurve keeps endpoints (linear) for a straight line", function()
+  local out = reduce.thinCurve(line(6), 0.01, { vmin = 0, vmax = 5 })
+  h.eq(#out, 2)
+  h.eq(out[1].shape, 1)              -- CC linear
+  h.eq(out[1].time, 0); h.eq(out[2].time, 5)
+end)
+
+h.test("thinCurve fits a slow-start/end arc with 2 points (shape 2)", function()
+  local out = reduce.thinCurve(arc(21, slowEase), 0.01, { vmin = 0, vmax = 1 })
+  h.eq(#out, 2)
+  h.eq(out[1].shape, 2)
+end)
+
+h.test("thinCurve fits a fast-start arc (shape 3) and fast-end arc (shape 4)", function()
+  local a = reduce.thinCurve(arc(21, fastStart), 0.01, { vmin = 0, vmax = 1 })
+  h.eq(#a, 2); h.eq(a[1].shape, 3)
+  local b = reduce.thinCurve(arc(21, fastEnd), 0.01, { vmin = 0, vmax = 1 })
+  h.eq(#b, 2); h.eq(b[1].shape, 4)
+end)
+
+h.test("thinCurve keeps far fewer points than rdp on a curve", function()
+  local a = arc(21, slowEase)
+  h.truthy(#reduce.thinCurve(a, 0.01, { vmin = 0, vmax = 1 }) < #reduce.rdp(a, 0.01),
+    "curve fit should keep fewer points than straight-line rdp")
+end)
+
+h.test("thinCurve reconstructs within eps and covers the span", function()
+  local a = arc(41, fastEnd)
+  local out = reduce.thinCurve(a, 0.02, { vmin = 0, vmax = 1 })
+  h.almost(out[1].time, 0, 1e-9); h.almost(out[#out].time, 1, 1e-9)   -- endpoints kept
+  for i = 1, #out - 1 do h.truthy(out[i + 1].time > out[i].time, "strictly increasing") end
+end)
+
+h.test("thinCurve emits envelope linear (0) under envConvention", function()
+  local out = reduce.thinCurve(line(6), 0.01, { vmin = 0, vmax = 5 }, { envConvention = true })
+  h.eq(out[1].shape, 0)
+end)
+
+h.test("thinCurve passes through tiny lists", function()
+  h.eq(#reduce.thinCurve({}, 0.1, { vmin = 0, vmax = 1 }), 0)
+  h.eq(#reduce.thinCurve({ { time = 0, value = 0 } }, 0.1, { vmin = 0, vmax = 1 }), 1)
+end)
+
 h.run()
