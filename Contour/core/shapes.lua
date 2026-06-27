@@ -1,6 +1,6 @@
 -- core/shapes.lua — pure waveform math. Returns values in [-1, 1]. No Reaper, no I/O.
 local M = {}
-local pi, cos, floor = math.pi, math.cos, math.floor
+local pi, cos, sin, floor, abs = math.pi, math.cos, math.sin, math.floor, math.abs
 
 local function clamp(x, lo, hi)
   if x < lo then return lo elseif x > hi then return hi else return x end
@@ -22,6 +22,22 @@ function base.triangle(t)
 end
 function base.sawup(t) return 2 * t - 1 end
 function base.sawdown(t) return 1 - 2 * t end
+-- Trapezoid: square with linear ramps of width `edge` in [0,0.5]. edge=0 => square (high first
+-- half), edge=0.5 => symmetric triangle (peak at 0.5).
+function base.trapezoid(t, edge)
+  edge = edge or 0.25
+  if edge > 0.5 then edge = 0.5 elseif edge < 0 then edge = 0 end
+  local x = t - floor(t)
+  if edge < 1e-9 then return (x < 0.5) and 1 or -1 end
+  if x < edge then return -1 + 2 * (x / edge)
+  elseif x < 0.5 then return 1
+  elseif x < 0.5 + edge then return 1 - 2 * ((x - 0.5) / edge)
+  else return -1 end
+end
+-- Rectified sine: full-wave rectified humps (|sin|), two positive humps per cycle.
+function base.rectsine(t) return 2 * abs(sin(2 * pi * t)) - 1 end
+-- Sine squared (sign-preserving): same zeros/extrema as sine, sharper peaks / flatter middle.
+function base.sine2(t) local s = -cos(2 * pi * t); return (s < 0 and -1 or 1) * s * s end
 function base.none(_) return 0 end
 M.base = base
 
@@ -34,6 +50,7 @@ local dispatch = {
   sine = base.sine, square = base.square, triangle = base.triangle,
   saw = base.sawup, parametric = base.sine,
   sawup = base.sawup, sawdown = base.sawdown, none = base.none,
+  trapezoid = base.trapezoid, rectsine = base.rectsine, sine2 = base.sine2,
 }
 
 local function applySmooth(v, vSine, smooth)
@@ -56,7 +73,9 @@ function M.value(shape, t, p)
   local tt = frac(t)
   local fn = dispatch[shape] or base.sine
   local v
-  if shape == "square" then v = fn(tt, p.pulseWidth) else v = fn(tt) end
+  if shape == "square" then v = fn(tt, p.pulseWidth)
+  elseif shape == "trapezoid" then v = fn(tt, p.edge)
+  else v = fn(tt) end
   -- Smoothing blends toward a sine of the same phase, so other shapes can be rounded.
   v = applySmooth(v, base.sine(tt), p.smooth or 0)
   return clamp(v, -1, 1)

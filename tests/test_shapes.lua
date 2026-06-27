@@ -86,4 +86,32 @@ h.test("randomAt is noise, not a staircase", function()
   h.truthy(hi - lo > 1.0, "random values should spread across the range")
 end)
 
+-- Trapezoid: square with linear ramps of width `edge` in [0,0.5]. edge=0 => high first half /
+-- low second half; edge=0.5 => symmetric triangle peaking at 0.5.
+h.test("trapezoid edges", function()
+  h.eq(shapes.value("trapezoid", 0.1, { edge = 0 }), 1)        -- edge 0 => high first half
+  h.eq(shapes.value("trapezoid", 0.6, { edge = 0 }), -1)       -- low second half
+  h.almost(shapes.value("trapezoid", 0.0, { edge = 0.25 }), -1)-- ramp starts at trough
+  h.almost(shapes.value("trapezoid", 0.25, { edge = 0.25 }), 1)-- reached high by end of ramp
+  h.almost(shapes.value("trapezoid", 0.5, { edge = 0.5 }), 1)  -- edge 0.5 => triangle peak at 0.5
+end)
+
+-- Rectified sine: full-wave |sin| humps. -1 at 0 and 0.5, +1 at 0.25 and 0.75 (two humps/cycle).
+h.test("rectified sine humps", function()
+  h.almost(shapes.value("rectsine", 0.0, {}), -1)
+  h.almost(shapes.value("rectsine", 0.25, {}), 1)
+  h.almost(shapes.value("rectsine", 0.5, {}), -1, 1e-9)
+  h.almost(shapes.value("rectsine", 0.75, {}), 1)
+end)
+
+-- Sine²: same zeros as sine (-cos phasing) but peakier (|value| < |sine| off the extremes).
+h.test("sine2 peakier than sine", function()
+  h.almost(shapes.value("sine2", 0.0, {}), -1)
+  h.almost(shapes.value("sine2", 0.5, {}), 1)
+  h.almost(shapes.value("sine2", 0.25, {}), 0, 1e-9)
+  local s  = math.abs(shapes.value("sine",  0.1, {}))
+  local s2 = math.abs(shapes.value("sine2", 0.1, {}))
+  h.truthy(s2 < s, "sine2 should be flatter than sine away from the extremes")
+end)
+
 h.run()
