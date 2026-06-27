@@ -410,9 +410,9 @@ end
 -- scales with `curve` (0..100 => linear..strongly bulged). Depth = amplitude. Sparse, like generateSaw.
 local function generatePump(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
   local N = totalCycles
-  local curve = max(0, min(1, (p.curve or 0) / 100))
+  local curve = max(-1, min(1, (p.curve or 0) / 100))   -- bipolar: sign = which way the ease bends
   local tension = curve * 0.9
-  local rampShape = (curve > 1e-9) and 5 or 1   -- bezier when curved, else linear
+  local rampShape = (abs(curve) > 1e-9) and 5 or 1   -- bezier when curved (either sign), else linear
   local eps = math.min(1e-4, 0.25 / N)
   local function emit(pts, rel, sv, shp, ten)
     if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
@@ -440,9 +440,9 @@ end
 local function generateAD(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
   local N = totalCycles
   local a = max(0.01, min(0.99, (p.attack or 50) / 100))
-  local curve = max(0, min(1, (p.curve or 0) / 100))
+  local curve = max(-1, min(1, (p.curve or 0) / 100))   -- bipolar: sign = which way the ease bends
   local tension = curve * 0.9
-  local seg = (curve > 1e-9) and 5 or 1
+  local seg = (abs(curve) > 1e-9) and 5 or 1
   local function emit(pts, rel, sv)
     if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
     local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)

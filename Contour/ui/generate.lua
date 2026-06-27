@@ -206,6 +206,8 @@ local function ui(state)
       shapeIdx  = DEFAULTS.shapeIdx,  -- 0-based combo index into SHAPES (None = default)
       cycles    = DEFAULTS.cycles,    -- Free rate: integer cycles over the selection
       amplitude = DEFAULTS.amplitude, -- -200..200 % of HALF range (native amplitude; neg inverts, >100 clips)
+      ampDirty  = false,  -- true once the user moves Amplitude -> stops following the per-target default
+      lastAmpTarget = nil,-- last detected target the amplitude default was synced to (edge-triggered)
       baseline  = DEFAULTS.baseline,  -- -100..100 % offset from center (native baseline)
       ccNum     = -1,     -- 0..127; -1 = not yet initialised from detection
       lastLane  = -1,     -- last-seen clicked CC lane, for edge-triggered follow
@@ -521,6 +523,14 @@ function M.draw(ctx, state, detected)
       g.lastLane = lane
     end
   end
+
+  -- Amplitude follows the per-target default (envelope/AI 100, CC 50) until you change it. Edge-
+  -- triggered on the detected target so a manually-set amplitude survives, but first run AND target
+  -- switches land on the right default — matching what Reset / double-click give.
+  if detected and detected.target and detected.target ~= g.lastAmpTarget then
+    if not g.ampDirty then g.amplitude = defaultAmp(detected) end
+    g.lastAmpTarget = detected.target
+  end
   if g.ccNum < 0 then g.ccNum = 1 end
 
   -- NOTE: amplitude is NOT auto-changed on context switch (that reset the value when hopping
@@ -634,8 +644,10 @@ function M.draw(ctx, state, detected)
     -- SliderInt so Ctrl+click type-entry works. Notch + double-click snap to the per-target default
     -- (envelope/AI 100, CC 50).
     changed, g.amplitude = reaper.ImGui_SliderInt(ctx, "Amplitude##gen_amp", g.amplitude, -200, 200, "%d")
+    if changed then g.ampDirty = true end   -- user moved it: stop following the per-target default
     acc(changed)
-    acc(tickReset(ctx, g, "amplitude", -200, 200, defaultAmp(detected)))
+    -- Double-click reset to the per-target default also resumes following it.
+    if tickReset(ctx, g, "amplitude", -200, 200, defaultAmp(detected)) then g.ampDirty = false; acc(true) end
   end
 
   reaper.ImGui_Separator(ctx)
@@ -673,10 +685,10 @@ function M.draw(ctx, state, detected)
       changed, g.attack = reaper.ImGui_SliderInt(ctx, "Attack##gen_attack", g.attack, 1, 99, "%d")
       acc(changed); acc(tickReset(ctx, g, "attack", 1, 99, 50))
     end
-    -- Curve for Pump + AD (recovery / ease steepness).
+    -- Curve for Pump + AD (ease steepness). Bipolar: 0 = linear, + bends one way, - bends the other.
     if currentShapeId(g) == "pump" or currentShapeId(g) == "ad" then
-      changed, g.curve = reaper.ImGui_SliderInt(ctx, "Curve##gen_curve", g.curve, 0, 100, "%d")
-      acc(changed); acc(tickReset(ctx, g, "curve", 0, 100, 0))
+      changed, g.curve = reaper.ImGui_SliderInt(ctx, "Curve##gen_curve", g.curve, -100, 100, "%d")
+      acc(changed); acc(tickReset(ctx, g, "curve", -100, 100, 0))
     end
     if not special then
       changed, g.freqSkew = reaper.ImGui_SliderInt(ctx, "Freq skew##gen_freqskew", g.freqSkew, -100, 100, "%d")
@@ -732,6 +744,7 @@ function M.draw(ctx, state, detected)
   if reaper.ImGui_Button(ctx, "Reset##gen_reset") then
     resetDefaults(g)
     g.amplitude = defaultAmp(detected)   -- target-aware (envelope/AI = 100, CC = 50)
+    g.ampDirty = false                   -- resume following the per-target default
     acc(true)
   end
 

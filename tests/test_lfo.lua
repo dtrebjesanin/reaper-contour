@@ -547,4 +547,17 @@ h.test("smooth rounds a square", function()
   h.truthy(mid, "smoothed square should have intermediate values")
 end)
 
+-- AD / Pump Curve is BIPOLAR: +curve and -curve bend the ease opposite ways (bezier tension sign
+-- flips); curve 0 stays linear.
+h.test("ad/pump curve bends both directions", function()
+  local function firstBezierTension(shape, curve)
+    local pts = lfo.generate({ t0 = 0, t1 = 2 },
+      { shape = shape, rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, curve = curve, attack = 50 })
+    for _, p in ipairs(pts) do if p.shape == 5 then return p.tension end end
+  end
+  h.truthy(firstBezierTension("ad", 50) > 0 and firstBezierTension("ad", -50) < 0, "AD curve opposite signs")
+  h.truthy(firstBezierTension("ad", 0) == nil, "AD curve 0 is linear (no bezier point)")
+  h.truthy(firstBezierTension("pump", 50) > 0 and firstBezierTension("pump", -50) < 0, "Pump curve opposite signs")
+end)
+
 h.run()
