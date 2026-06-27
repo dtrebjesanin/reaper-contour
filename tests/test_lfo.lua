@@ -671,4 +671,30 @@ h.test("steps on triangle preserves the attack peak", function()
   h.truthy(bestT ~= nil and bestT < 0.35, "stepped triangle peak should sit near attack 0.2, got " .. tostring(bestT))
 end)
 
+-- swingWarpInverse is the exact inverse of swingWarp (so the generic path swings the same way the
+-- sparse anchored emitters do).
+h.test("swingWarpInverse inverts swingWarp", function()
+  for _, sw in ipairs({ -0.7, -0.3, 0, 0.3, 0.6, 1.0 }) do
+    for _, sp in ipairs({ 0, 0.2, 0.5, 0.7, 0.99 }) do
+      h.almost(lfo.swingWarpInverse(lfo.swingWarp(sp, sw), sw), sp, 1e-9)
+    end
+  end
+end)
+
+-- The generic (Steps/Smooth) sampler swings the sine family with the PER-CYCLE swingWarp model, not
+-- the pair-based one — so toggling Smooth on a swung sine doesn't jump. (smooth=1 on a sine is value-
+-- identical to no smooth; it just forces the generic path.) Check a sample in the SECOND half of a
+-- cycle, where the two swing models diverge.
+h.test("generic swing uses the per-cycle model for the sine family", function()
+  local swing = 0.6
+  local pts = lfo.generate({ t0 = 0, t1 = 4 }, { shape = "sine", rate = { mode = "free", cycles = 4 },
+    amplitude = 1, baseline = 0, swing = swing, smooth = 1, density = 64 })
+  local best, bd = nil, 1e9
+  for _, p in ipairs(pts) do local d = math.abs(p.time - 0.9); if d < bd then bd, best = d, p end end
+  local cp0 = best.time                      -- cycles=4 over [0,4], no freq skew => cp0 == time
+  local frac = cp0 - math.floor(cp0)
+  local expected = -math.cos(2 * math.pi * lfo.swingWarpInverse(frac, swing))
+  h.almost(best.value, expected, 1e-6, "generic sine swing must follow swingWarpInverse")
+end)
+
 h.run()

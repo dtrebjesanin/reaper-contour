@@ -149,6 +149,18 @@ function M.swingWarp(sp, swing)
   return m + (sp - 0.5) * ((1 - m) / 0.5)
 end
 
+-- swingWarpInverse: warped time-fraction w -> sample-phase sp (the inverse of swingWarp). The generic
+-- (Steps/Smooth) sampler maps a time-fraction back to a waveform phase, so it uses THIS to swing the
+-- anchored-family shapes the same way their sparse emitters do (which PLACE samples via swingWarp).
+-- Identity when swing=0; the breakpoint m = swingWarp(0.5).
+function M.swingWarpInverse(w, swing)
+  if not swing or swing == 0 then return w end
+  swing = max(-1, min(1, swing))
+  local m = 0.5 + swing * 0.25
+  if w <= m then return w * (0.5 / m) end
+  return 0.5 + (w - m) * (0.5 / (1 - m))
+end
+
 -- half(rel): global amplitude ramp anchored by amp skew s_a in [-1,1].
 local function ampHalf(baseHalf, s_a, rel)
   if not s_a or s_a == 0 then return baseHalf end
@@ -557,7 +569,22 @@ function M.generate(span, params)
   local function sampleValue(rel)
     -- Global freq-skew warp on the phase position, then swing, then split into cycle.
     local warpedCycles = totalCycles * M.freqWarp(rel, freqSkew)
-    local cyclePos = M.swingCyclePos(warpedCycles - phase, swing)
+    local cp0 = warpedCycles - phase
+    -- SWING must match the shape's SPARSE emitter so toggling Steps/Smooth doesn't jump:
+    --   saw/sawdown/sawup -> pair-based swingCyclePos (matches generateSaw's boundaryCP);
+    --   triangle          -> none (its Attack owns peak position; swing is ignored there);
+    --   else (sine/parametric/sine2/square/trapezoid/rectsine) -> per-cycle swingWarp, applied as its
+    --     INVERSE (time-fraction -> waveform phase). swing=0 makes all branches identity (= cp0).
+    local sh = p.shape
+    local cyclePos
+    if sh == "saw" or sh == "sawdown" or sh == "sawup" then
+      cyclePos = M.swingCyclePos(cp0, swing)
+    elseif sh == "triangle" then
+      cyclePos = cp0
+    else
+      local c = floor(cp0)
+      cyclePos = c + M.swingWarpInverse(cp0 - c, swing)
+    end
     local cyc = floor(cyclePos)
     local tInCycle = cyclePos - cyc
     local sv = shapes.value(p.shape, tInCycle, p)
