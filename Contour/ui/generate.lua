@@ -118,9 +118,8 @@ local SHAPE_OUTPUT = {
   -- for the rare smooth/quantize path:
   sawdown    = { ppc = 2,  ccShape = 1 },   -- descending ramp (sparse emitter)
   trapezoid  = { ppc = 8,  ccShape = 1 },   -- 4-corner sparse emitter
-  -- Curvy shapes run through the generic sampler at modest density (8/cycle renders the curve cleanly):
-  rectsine   = { ppc = 8,  ccShape = 1 },
-  sine2      = { ppc = 8,  ccShape = 1 },
+  rectsine   = { ppc = 8,  ccShape = 1 },   -- curvy: generic sampler at modest density
+  sine2      = { ppc = 4,  ccShape = 3 },   -- anchored emitter (parametric-style, swapped eases)
   -- Dedicated emitters tag their own per-point shapes; ppc/ccShape here are inert fallbacks:
   pump       = { ppc = 2,  ccShape = 1 },
   ad         = { ppc = 2,  ccShape = 1 },
@@ -688,9 +687,15 @@ function M.draw(ctx, state, detected)
     if not special then
       changed, g.swing = reaper.ImGui_SliderDouble(ctx, "Swing##gen_swing", g.swing, -1.0, 1.0, "%.2f")
       acc(changed); acc(tickReset(ctx, g, "swing", -1.0, 1.0, 0.0))
-      -- Modifiers (periodic shapes only): Steps quantizes to N levels; Smooth rounds toward sine.
+    end
+    -- Steps quantizes the wave into N flat levels (a staircase). Meaningless on Square (already 2
+    -- levels) and on the special generators.
+    if not special and sid ~= "square" then
       changed, g.steps = reaper.ImGui_SliderInt(ctx, "Steps##gen_steps", g.steps, 0, 32, g.steps < 2 and "off" or "%d")
       acc(changed); acc(tickReset(ctx, g, "steps", 0, 32, 0))
+    end
+    -- Smooth rounds the shape toward a sine. Meaningless on Sine (already a sine) and the specials.
+    if not special and sid ~= "sine" then
       changed, g.smooth = reaper.ImGui_SliderInt(ctx, "Smooth##gen_smooth", g.smooth, 0, 100, "%d")
       acc(changed); acc(tickReset(ctx, g, "smooth", 0, 100, 0))
     end

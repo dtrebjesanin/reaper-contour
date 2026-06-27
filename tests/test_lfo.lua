@@ -508,8 +508,43 @@ h.test("trapezoid is sparse with corner values", function()
   end
 end)
 
--- (Rectified sine / Sine2 density is set in the UI via SHAPE_OUTPUT ppc=8 — a UI-layer value the
--- headless engine doesn't see, so it has no engine-level test; the sparsity that IS engine behavior
--- lives in the Saw Down / Trapezoid dedicated emitters above.)
+-- Sine2: anchored + SPARSE (4 samples/cycle like parametric) with SWAPPED eases — extrema (value
+-- +/-1) take fast START (3), zero-crossings (value 0) take fast END (4): the pinched/peakier curve
+-- (not the triangle the old dense-sampled version aliased to).
+h.test("sine2 is sparse with swapped (pinched) eases", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 2 },
+    { shape = "sine2", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0 })
+  h.truthy(#pts <= 12, "sine2 must be sparse (got " .. #pts .. ")")
+  for _, p in ipairs(pts) do
+    if math.abs(math.abs(p.value) - 1) < 1e-6 then
+      h.eq(p.shape, 3, "extremum -> fast start")
+    elseif math.abs(p.value) < 1e-6 then
+      h.eq(p.shape, 4, "zero-cross -> fast end")
+    end
+  end
+end)
+
+-- Steps now quantizes a Saw into a real staircase: values collapse to ~N levels and the density is
+-- bumped so each level shows (previously Steps was a no-op on saw).
+h.test("steps quantizes a saw into a staircase", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 2 },
+    { shape = "saw", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, quantizeSteps = 4 })
+  h.truthy(#pts >= 16, "stepped saw is densely sampled (got " .. #pts .. ")")
+  local levels = {}
+  for _, p in ipairs(pts) do levels[string.format("%.4f", p.value)] = true end
+  local n = 0; for _ in pairs(levels) do n = n + 1 end
+  h.truthy(n <= 4, "saw values quantized to <= 4 levels (got " .. n .. ")")
+end)
+
+-- Smooth now rounds a Square toward a sine: values land strictly inside (-1,+1), not only +/-1, and
+-- the density is bumped so the curve is clean.
+h.test("smooth rounds a square", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 2 },
+    { shape = "square", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, smooth = 1 })
+  h.truthy(#pts >= 16, "smoothed square is densely sampled (got " .. #pts .. ")")
+  local mid = false
+  for _, p in ipairs(pts) do if math.abs(p.value) < 0.9 then mid = true; break end end
+  h.truthy(mid, "smoothed square should have intermediate values")
+end)
 
 h.run()

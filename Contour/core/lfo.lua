@@ -169,7 +169,7 @@ local function emitAnchored(shape, t0, t1, spanLen, totalCycles, p, amp, baseV, 
   local phase = p.phase or 0
   local swing = max(-1, min(1, p.swing or 0))
   local N = totalCycles
-  local sampleSet = (shape == "parametric") and { 0, 0.25, 0.5, 0.75 } or { 0, 0.5 }
+  local sampleSet = (shape == "parametric" or shape == "sine2") and { 0, 0.25, 0.5, 0.75 } or { 0, 0.5 }
 
   local function valueAt(rel, sv)
     local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
@@ -190,6 +190,13 @@ local function emitAnchored(shape, t0, t1, spanLen, totalCycles, p, amp, baseV, 
     if shape == "parametric" then
       local ext = (sp < 1e-9) or (abs(sp - 0.5) < 1e-9)
       return ext and 4 or 3
+    end
+    if shape == "sine2" then
+      -- Sine² (peakier sine): the OPPOSITE eases to parametric — fast START at the extrema (steep
+      -- leaving +/-1) and fast END at the zero-crossings (flat through 0), giving the pinched,
+      -- steep-at-the-peaks curvature. Same -cos anchor values as parametric.
+      local ext = (sp < 1e-9) or (abs(sp - 0.5) < 1e-9)
+      return ext and 3 or 4
     end
     return 2
   end
@@ -465,6 +472,11 @@ function M.generate(span, params)
   local p = params
   local cycleLen = M.cycleLength(p.rate, spanLen)
   local ppc = max(1, p.density or 16)
+  -- Steps/Smooth force the dense generic sampler: bump density so a quantized staircase has enough
+  -- points per level and a smoothed shape reads as a clean curve (the per-shape ppc is tuned for the
+  -- SPARSE emitters, which would be far too coarse on the generic path).
+  if p.quantizeSteps and p.quantizeSteps >= 2 then ppc = max(ppc, 4 * p.quantizeSteps) end
+  if (p.smooth or 0) > 0 then ppc = max(ppc, 24) end
   local dt = cycleLen / ppc
   local n = max(1, floor(spanLen / dt + 0.5))
 
@@ -508,7 +520,7 @@ function M.generate(span, params)
   -- handles phase, swing, freqSkew, ampSkew and tilt directly (the old phase/swing guards
   -- that bounced these onto the dense sampler are GONE). Only a shape MODIFIER that bends
   -- the per-sample geometry — smooth or quantize — falls through to the generic sampler.
-  if (p.shape == "sine" or p.shape == "triangle" or p.shape == "parametric")
+  if (p.shape == "sine" or p.shape == "triangle" or p.shape == "parametric" or p.shape == "sine2")
      and (p.smooth or 0) == 0 and not p.quantizeSteps then
     return emitAnchored(p.shape, t0, t1, spanLen, totalCycles, p,
       amp, baseV, ampSkew, freqSkew, tiltOffset)
@@ -524,12 +536,13 @@ function M.generate(span, params)
   -- SAW: native rising ramp (== sawup) with a sharp reset. Now FREQ-SKEW aware and SPARSE under
   -- all modulators (warped boundaries, linear ramps); only smooth routes it elsewhere. The legacy
   -- "sawup"/"sawdown" extras still use the dense sampler (their behavior is unchanged).
-  if p.shape == "saw" and (p.smooth or 0) == 0 then
+  if p.shape == "saw" and (p.smooth or 0) == 0 and not p.quantizeSteps then
     return generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   end
 
-  -- SAW DOWN: descending ramp, sparse like Saw Up (mirrors saw's smooth-only guard).
-  if p.shape == "sawdown" and (p.smooth or 0) == 0 then
+  -- SAW DOWN: descending ramp, sparse like Saw Up. Steps/Smooth route it to the generic sampler
+  -- (a stepped ramp -> staircase, a smoothed ramp -> rounded).
+  if p.shape == "sawdown" and (p.smooth or 0) == 0 and not p.quantizeSteps then
     return generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset, true)
   end
 
