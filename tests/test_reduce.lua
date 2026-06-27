@@ -104,6 +104,14 @@ h.test("thinCurve emits envelope linear (0) under envConvention", function()
   h.eq(out[1].shape, 0)
 end)
 
+-- envConvention only swaps LINEAR (1<->0); curve shapes (2/3/4) are identical across conventions and
+-- must pass through unchanged.
+h.test("thinCurve keeps curve shapes under envConvention", function()
+  local out = reduce.thinCurve(arc(21, slowEase), 0.01, { vmin = 0, vmax = 1 }, { envConvention = true })
+  h.eq(#out, 2)
+  h.eq(out[1].shape, 2)
+end)
+
 h.test("thinCurve passes through tiny lists", function()
   h.eq(#reduce.thinCurve({}, 0.1, { vmin = 0, vmax = 1 }), 0)
   h.eq(#reduce.thinCurve({ { time = 0, value = 0 } }, 0.1, { vmin = 0, vmax = 1 }), 1)
