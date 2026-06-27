@@ -114,11 +114,13 @@ local SHAPE_OUTPUT = {
   saw        = { ppc = 2,  ccShape = 1 },
   square     = { ppc = 2,  ccShape = 0 },
   parametric = { ppc = 4,  ccShape = 4 },
-  -- Generic-sampler shapes (no per-point shape tag) -> dense points + fallback CC shape:
-  sawdown    = { ppc = 16, ccShape = 1 },   -- descending ramp (linear)
-  trapezoid  = { ppc = 24, ccShape = 1 },   -- linear ramps + holds
-  rectsine   = { ppc = 24, ccShape = 1 },   -- humps approximated by dense linear points
-  sine2      = { ppc = 24, ccShape = 1 },
+  -- Saw Down & Trapezoid now have dedicated SPARSE emitters; ppc/ccShape here are only the fallback
+  -- for the rare smooth/quantize path:
+  sawdown    = { ppc = 2,  ccShape = 1 },   -- descending ramp (sparse emitter)
+  trapezoid  = { ppc = 8,  ccShape = 1 },   -- 4-corner sparse emitter
+  -- Curvy shapes run through the generic sampler at modest density (8/cycle renders the curve cleanly):
+  rectsine   = { ppc = 8,  ccShape = 1 },
+  sine2      = { ppc = 8,  ccShape = 1 },
   -- Dedicated emitters tag their own per-point shapes; ppc/ccShape here are inert fallbacks:
   pump       = { ppc = 2,  ccShape = 1 },
   ad         = { ppc = 2,  ccShape = 1 },
@@ -643,12 +645,18 @@ function M.draw(ctx, state, detected)
   reaper.ImGui_Text(ctx, "Shaping")
   do
     local changed
+    local sid = currentShapeId(g)
+    -- Pump / AD / Random / Drift use dedicated emitters that ignore Phase, Freq skew, Swing and the
+    -- Steps / Smooth modifiers — hide those controls for them so the panel shows only what has effect.
+    local special = (sid == "pump" or sid == "ad" or sid == "random" or sid == "drift")
     -- Phase 0..100 slider units (phase/100 cycles; 100 = one full cycle), converted in buildParams.
     -- All shaping faders: double-click snaps to the notch (default).
-    changed, g.phase = reaper.ImGui_SliderInt(ctx, "Phase##gen_phase", g.phase, 0, 100, "%d")
-    acc(changed); acc(tickReset(ctx, g, "phase", 0, 100, 0))
-    -- Amp skew / Freq skew / Tilt are native % (-100..100), converted to value units / [-1,1]
-    -- in buildParams.
+    if not special then
+      changed, g.phase = reaper.ImGui_SliderInt(ctx, "Phase##gen_phase", g.phase, 0, 100, "%d")
+      acc(changed); acc(tickReset(ctx, g, "phase", 0, 100, 0))
+    end
+    -- Amp skew / Tilt apply to every shape (the dedicated emitters use them too). Freq skew is gated
+    -- below with the other periodic-only modulators.
     changed, g.ampSkew = reaper.ImGui_SliderInt(ctx, "Amp skew##gen_ampskew", g.ampSkew, -100, 100, "%d")
     acc(changed); acc(tickReset(ctx, g, "ampSkew", -100, 100, 0))
     -- Pulse width only for Square.
@@ -671,17 +679,21 @@ function M.draw(ctx, state, detected)
       changed, g.curve = reaper.ImGui_SliderInt(ctx, "Curve##gen_curve", g.curve, 0, 100, "%d")
       acc(changed); acc(tickReset(ctx, g, "curve", 0, 100, 0))
     end
-    changed, g.freqSkew = reaper.ImGui_SliderInt(ctx, "Freq skew##gen_freqskew", g.freqSkew, -100, 100, "%d")
-    acc(changed); acc(tickReset(ctx, g, "freqSkew", -100, 100, 0))
+    if not special then
+      changed, g.freqSkew = reaper.ImGui_SliderInt(ctx, "Freq skew##gen_freqskew", g.freqSkew, -100, 100, "%d")
+      acc(changed); acc(tickReset(ctx, g, "freqSkew", -100, 100, 0))
+    end
     changed, g.tilt = reaper.ImGui_SliderInt(ctx, "Tilt##gen_tilt", g.tilt, -100, 100, "%d")
     acc(changed); acc(tickReset(ctx, g, "tilt", -100, 100, 0))
-    changed, g.swing = reaper.ImGui_SliderDouble(ctx, "Swing##gen_swing", g.swing, -1.0, 1.0, "%.2f")
-    acc(changed); acc(tickReset(ctx, g, "swing", -1.0, 1.0, 0.0))
-    -- Global modifiers (apply to ANY shape). Steps quantizes to N levels; Smooth rounds toward sine.
-    changed, g.steps = reaper.ImGui_SliderInt(ctx, "Steps##gen_steps", g.steps, 0, 32, g.steps < 2 and "off" or "%d")
-    acc(changed); acc(tickReset(ctx, g, "steps", 0, 32, 0))
-    changed, g.smooth = reaper.ImGui_SliderInt(ctx, "Smooth##gen_smooth", g.smooth, 0, 100, "%d")
-    acc(changed); acc(tickReset(ctx, g, "smooth", 0, 100, 0))
+    if not special then
+      changed, g.swing = reaper.ImGui_SliderDouble(ctx, "Swing##gen_swing", g.swing, -1.0, 1.0, "%.2f")
+      acc(changed); acc(tickReset(ctx, g, "swing", -1.0, 1.0, 0.0))
+      -- Modifiers (periodic shapes only): Steps quantizes to N levels; Smooth rounds toward sine.
+      changed, g.steps = reaper.ImGui_SliderInt(ctx, "Steps##gen_steps", g.steps, 0, 32, g.steps < 2 and "off" or "%d")
+      acc(changed); acc(tickReset(ctx, g, "steps", 0, 32, 0))
+      changed, g.smooth = reaper.ImGui_SliderInt(ctx, "Smooth##gen_smooth", g.smooth, 0, 100, "%d")
+      acc(changed); acc(tickReset(ctx, g, "smooth", 0, 100, 0))
+    end
   end
 
   reaper.ImGui_Separator(ctx)

@@ -487,4 +487,29 @@ h.test("ad: peak lands at the attack fraction", function()
   h.almost(peakT, 0.25, 1e-6)                  -- peak at the attack fraction
 end)
 
+-- Saw Down: descending ramp, SPARSE like Saw Up (dedicated emitter, not the dense sampler).
+h.test("saw down is sparse and descends", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 4 },
+    { shape = "sawdown", rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0 })
+  h.truthy(#pts <= 12, "saw down must be sparse (got " .. #pts .. ")")
+  for _, p in ipairs(pts) do h.eq(p.shape, 1, "linear ramp") end
+  h.almost(pts[1].value, 1, 1e-9)              -- starts at the peak, descends from there
+  h.almost(pts[#pts].value, -1, 1e-9)          -- ends at the trough (integer cycles)
+end)
+
+-- Trapezoid: SPARSE 4-corner emitter (points only at +/-1 corners; ramps are interpolated).
+h.test("trapezoid is sparse with corner values", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 4 },
+    { shape = "trapezoid", rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0, edge = 0.25 })
+  h.truthy(#pts <= 24, "trapezoid must be sparse (got " .. #pts .. ")")
+  for _, p in ipairs(pts) do
+    h.eq(p.shape, 1, "linear segments")
+    h.truthy(math.abs(math.abs(p.value) - 1) < 1e-9, "only +/-1 corner values")
+  end
+end)
+
+-- (Rectified sine / Sine2 density is set in the UI via SHAPE_OUTPUT ppc=8 — a UI-layer value the
+-- headless engine doesn't see, so it has no engine-level test; the sparsity that IS engine behavior
+-- lives in the Saw Down / Trapezoid dedicated emitters above.)
+
 h.run()

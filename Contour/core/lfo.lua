@@ -304,10 +304,15 @@ end
 --     shifts ODD reset boundaries by swing*0.5 in cycle-position (the pair feel — the inverse of
 --     swingCyclePos at the resets), stretching one ramp and compressing the next. Sparse, so it
 --     responds to swing without densifying. Value model (amp-skew half, tilt) applies.
-local function generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
+-- Rising SAW (native "Saw") or, with desc=true, descending SAW ("Saw Down"). Both are SPARSE: a ramp
+-- per cycle (start -> end) plus a near-instant reset, freq-skew/swing aware. desc flips the ramp
+-- direction (lo/hi); the desc=false path is byte-identical to the original native saw.
+local function generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset, desc)
   local N = totalCycles
   local swing = max(-1, min(1, p.swing or 0))
   local eps = 1e-4                             -- ~1 tick reset gap (the writer snaps to the grid)
+  local lo, hi = -1, 1                         -- Saw Up: trough -> peak
+  if desc then lo, hi = 1, -1 end              -- Saw Down: peak -> trough
   local function emit(pts, rel, sv)
     if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
     local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
@@ -317,21 +322,52 @@ local function generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew,
   -- Raw cycle-position of the c-th reset boundary (odd boundaries swing-shifted), then freq-warped.
   local function boundaryCP(c) return (c % 2 == 1) and (c + swing * 0.5) or c end
   local pts = {}
-  emit(pts, 0, -1)                             -- first trough
+  emit(pts, 0, lo)                             -- first ramp start
   local c = 1
   while true do
     local prog = boundaryCP(c) / N
     if prog >= 1 - 1e-9 then break end
     local relB = M.freqWarpInverse(prog, freqSkew)
-    emit(pts, relB, 1)                         -- peak (ramp end of cycle c-1)
-    emit(pts, relB + eps, -1)                  -- reset trough (cycle c start)
+    emit(pts, relB, hi)                        -- ramp end of cycle c-1
+    emit(pts, relB + eps, lo)                  -- reset (cycle c start)
     c = c + 1
   end
-  -- Final point at the span end = the saw at the SWUNG end position (integer -> peak +1; partial
-  -- -> a partial ramp value).
+  -- Final point at the span end = the ramp value at the SWUNG end position (integer -> hi; partial
+  -- -> a partial ramp value interpolated lo->hi).
   local endCP = M.swingCyclePos(N, swing)
   local fracEnd = endCP - floor(endCP)
-  emit(pts, 1, (fracEnd < 1e-9) and 1 or (2 * fracEnd - 1))
+  emit(pts, 1, (fracEnd < 1e-9) and hi or (lo + (hi - lo) * fracEnd))
+  return pts
+end
+
+-- Trapezoid: SPARSE emitter placing points only at the 4 corners per cycle (trough, ramp-up end,
+-- hold end, ramp-down end), linear between. edge in [0,0.5]: ~0 = near-square, 0.5 = triangle. amp
+-- skew / tilt / fade apply; phase/swing/freq-skew are not warped (utility shape). Span edges are
+-- anchored from the waveform value so coverage runs t0..t1.
+local function generateTrapezoid(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
+  local N = totalCycles
+  local e = p.edge or 0.25
+  if e > 0.5 then e = 0.5 elseif e < 0.001 then e = 0.001 end   -- avoid the degenerate edge=0 case
+  local function emit(pts, rel, sv)
+    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
+    local half = ampHalf(amp, ampSkew, rel)
+    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = 1 }
+  end
+  local corners = { { 0, -1 }, { e, 1 }, { 0.5, 1 }, { 0.5 + e, -1 } }   -- {phase, value} per cycle
+  local samp = {}
+  for c = 0, ceil(N) do
+    for _, k in ipairs(corners) do
+      local rel = (c + k[1]) / N
+      if rel > 1e-9 and rel < 1 - 1e-9 then samp[#samp + 1] = { rel = rel, sv = k[2] } end
+    end
+  end
+  samp[#samp + 1] = { rel = 0, sv = shapes.value("trapezoid", 0, { edge = e }) }
+  samp[#samp + 1] = { rel = 1, sv = shapes.value("trapezoid", N, { edge = e }) }
+  table.sort(samp, function(a, b) return a.rel < b.rel end)
+  local pts, lastRel = {}, nil
+  for _, s in ipairs(samp) do
+    if lastRel == nil or s.rel - lastRel > 1e-6 then emit(pts, s.rel, s.sv); lastRel = s.rel end
+  end
   return pts
 end
 
@@ -492,7 +528,17 @@ function M.generate(span, params)
     return generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   end
 
-  -- Generic ppc sampler (legacy sawup/sawdown, smooth/quantized, warped shapes).
+  -- SAW DOWN: descending ramp, sparse like Saw Up (mirrors saw's smooth-only guard).
+  if p.shape == "sawdown" and (p.smooth or 0) == 0 then
+    return generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset, true)
+  end
+
+  -- TRAPEZOID: sparse 4-corner emitter (routes to the generic sampler only when smooth/quantize bend it).
+  if p.shape == "trapezoid" and (p.smooth or 0) == 0 and not p.quantizeSteps then
+    return generateTrapezoid(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
+  end
+
+  -- Generic ppc sampler (smoothed/quantized waveforms, plus the curvy rectsine/sine2 at low density).
   -- Flows through the GLOBAL value model: amp-skew ramp on the half-amplitude, freq-skew
   -- phase warp on the cycle position, value-unit tilt offset. PHASE is subtracted (native
   -- delays for +phase: shape-phase = totalCycles*warp(rel) - phase), consistent with
