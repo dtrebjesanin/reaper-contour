@@ -475,4 +475,16 @@ h.test("pump curve=0 is linear recovery", function()
   h.eq(pts[1].shape, 1, "no curve => linear")
 end)
 
+-- AD: rise to a peak at the Attack fraction, then decay. 1 cycle over a span of length 1, attack=25%
+-- => the peak (+1) point sits near t=0.25.
+h.test("ad: peak lands at the attack fraction", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 1 },
+    { shape = "ad", rate = { mode = "free", cycles = 1 }, amplitude = 1, baseline = 0, attack = 25, curve = 50 })
+  h.almost(pts[1].value, -1, 1e-9)             -- starts at trough
+  local peakT
+  for _, p in ipairs(pts) do if p.value > 0.99 then peakT = p.time end end
+  h.truthy(peakT ~= nil, "has a peak")
+  h.almost(peakT, 0.25, 1e-6)                  -- peak at the attack fraction
+end)
+
 h.run()
