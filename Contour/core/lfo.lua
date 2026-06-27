@@ -179,7 +179,26 @@ local function emitAnchored(shape, t0, t1, spanLen, totalCycles, p, amp, baseV, 
   local phase = p.phase or 0
   local swing = max(-1, min(1, p.swing or 0))
   local N = totalCycles
-  local sampleSet = (shape == "parametric" or shape == "sine2") and { 0, 0.25, 0.5, 0.75 } or { 0, 0.5 }
+  -- Triangle gains Attack (movable peak) + Curve (bent segments). triA in [0.01,0.99]; triCurve
+  -- bipolar. Other shapes ignore these.
+  local triA = max(0.01, min(0.99, (p.attack or 50) / 100))
+  local triCurve = max(-1, min(1, (p.curve or 0) / 100))
+  local triTension = triCurve * 0.9
+  local triShape = (shape == "triangle") and ((abs(triCurve) > 1e-9) and 5 or 1) or nil
+  local sampleSet =
+        (shape == "triangle") and { 0, triA }
+     or ((shape == "parametric" or shape == "sine2") and { 0, 0.25, 0.5, 0.75 } or { 0, 0.5 })
+
+  -- Waveform value at shape-phase x. Triangle = a piecewise-linear peak at triA (NOT -cos, whose peak
+  -- only lands at 0.5); all other shapes keep the -cos model. At triA=0.5 the two agree at every
+  -- sampled point used by the native-match configs, so the default triangle is byte-identical.
+  local function waveVal(x)
+    if shape == "triangle" then
+      local f = x - floor(x)
+      if f < triA then return -1 + 2 * (f / triA) else return 1 - 2 * ((f - triA) / (1 - triA)) end
+    end
+    return -cos(2 * pi * x)
+  end
 
   local function valueAt(rel, sv)
     local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
@@ -187,52 +206,41 @@ local function emitAnchored(shape, t0, t1, spanLen, totalCycles, p, amp, baseV, 
     return baseV + half * sv * depth + tiltOffset * rel
   end
 
-  -- Per-point CC interpolation shape (int), read from native dumps CC30/CC31:
-  --   sine       -> slow start/end (2) on EVERY point: the S-curve draws a true sine through the
-  --                 2-pts/cycle extrema.
-  --   triangle   -> linear (1): straight segments between the same extrema.
-  --   parametric -> fast end (4) at the extrema (sp 0/0.5), fast start (3) at the mid/zero-cross
-  --                 points (sp 0.25/0.75). The alternating eases give each quarter-cycle the
-  --                 correct sine curvature (flat at the extremes, steep at the crossings) — far
-  --                 more prominent than a tension-0 bezier (the user-reported "not prominent").
+  -- Per-point CC interpolation shape (int). Triangle: linear, or bezier when Curve != 0.
+  --   sine -> slow start/end (2); parametric -> fast end (4) at extrema / fast start (3) at mids;
+  --   sine2 -> slow start/end (2) on every point.
   local function shapeFor(sp)
-    if shape == "triangle" then return 1 end
+    if shape == "triangle" then return triShape end
     if shape == "parametric" then
       local ext = (sp < 1e-9) or (abs(sp - 0.5) < 1e-9)
       return ext and 4 or 3
     end
-    if shape == "sine2" then
-      -- Sine² (peakier sine): same -cos anchors as parametric (-1,0,+1,0 at the quarter phases) but
-      -- SLOW start/end on EVERY point. The s^2 curve has a flat tangent at all four (slope 0 at the
-      -- extrema AND the zero-crossings), so flat-ended S-curves between them read as a smooth, centre-
-      -- flattened sine -- NOT the spike that fast eases produced.
-      return 2
-    end
+    if shape == "sine2" then return 2 end
     return 2
   end
 
-  -- Collect {rel, sv, shp}. A sample at phase position pp = c + swingWarp(sp) has time-progress
+  -- Collect {rel, sv, shp, ten}. A sample at phase position pp = c + swingWarp(sp) has time-progress
   -- prog = (pp + phase)/N which must lie in the OPEN (0,1) (the 0/1 edges are anchors).
   local samp = {}
   for c = floor(-phase) - 1, ceil(N) + 1 do
     for _, sp in ipairs(sampleSet) do
       local prog = (c + M.swingWarp(sp, swing) + phase) / N
       if prog > 1e-9 and prog < 1 - 1e-9 then
-        samp[#samp + 1] = { rel = M.freqWarpInverse(prog, freqSkew), sv = -cos(2 * pi * sp), shp = shapeFor(sp) }
+        samp[#samp + 1] = { rel = M.freqWarpInverse(prog, freqSkew), sv = waveVal(sp), shp = shapeFor(sp), ten = triTension }
       end
     end
   end
-  -- Span-edge anchors (troughs/extrema). warpInverse(0)=0, warpInverse(1)=1, so the shape-phase
-  -- at the edges is -phase (rel 0) and N-phase (rel 1); value = -cos(2*pi*shapePhase).
-  samp[#samp + 1] = { rel = 0, sv = -cos(2 * pi * (-phase)), shp = shapeFor(0) }
-  samp[#samp + 1] = { rel = 1, sv = -cos(2 * pi * (N - phase)), shp = shapeFor(0) }
+  -- Span-edge anchors. warpInverse(0)=0, warpInverse(1)=1, so the shape-phase at the edges is
+  -- -phase (rel 0) and N-phase (rel 1); value = waveVal(shapePhase).
+  samp[#samp + 1] = { rel = 0, sv = waveVal(-phase), shp = shapeFor(0), ten = triTension }
+  samp[#samp + 1] = { rel = 1, sv = waveVal(N - phase), shp = shapeFor(0), ten = triTension }
 
   table.sort(samp, function(a, b) return a.rel < b.rel end)
 
   local pts, lastRel = {}, nil
   for _, s in ipairs(samp) do
     if lastRel == nil or s.rel - lastRel > 1e-6 then
-      pts[#pts + 1] = { time = t0 + s.rel * spanLen, value = valueAt(s.rel, s.sv), shape = s.shp }
+      pts[#pts + 1] = { time = t0 + s.rel * spanLen, value = valueAt(s.rel, s.sv), shape = s.shp, tension = s.ten }
       lastRel = s.rel
     end
   end

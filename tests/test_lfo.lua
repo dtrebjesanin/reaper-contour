@@ -651,4 +651,27 @@ h.test("saw curve keeps point count; saw down curves as well", function()
   h.truthy(bez, "saw down curve -> bezier points with -tension")
 end)
 
+-- Triangle Attack moves the peak; Attack 50 + Curve 0 = today's native triangle (all linear).
+h.test("triangle attack moves the peak; default stays linear", function()
+  local def = lfo.generate({ t0 = 0, t1 = 1 },
+    { shape = "triangle", rate = { mode = "free", cycles = 1 }, amplitude = 1, baseline = 0 })
+  for _, p in ipairs(def) do h.eq(p.shape, 1, "default triangle is linear") end
+  local function peakTime(attack)
+    local pts = lfo.generate({ t0 = 0, t1 = 1 },
+      { shape = "triangle", rate = { mode = "free", cycles = 1 }, amplitude = 1, baseline = 0, attack = attack })
+    for _, p in ipairs(pts) do if math.abs(p.value - 1) < 1e-6 then return p.time end end
+  end
+  h.almost(peakTime(50), 0.5, 1e-6, "attack 50 -> peak at mid")
+  h.almost(peakTime(25), 0.25, 1e-6, "attack 25 -> peak at quarter")
+end)
+
+-- Triangle Curve bends the rise/fall via bezier.
+h.test("triangle curve bends the segments (bezier)", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 1 },
+    { shape = "triangle", rate = { mode = "free", cycles = 1 }, amplitude = 1, baseline = 0, curve = 60 })
+  local bez = false
+  for _, p in ipairs(pts) do if p.shape == 5 and (p.tension or 0) > 0 then bez = true end end
+  h.truthy(bez, "triangle curve -> bezier points with +tension")
+end)
+
 h.run()

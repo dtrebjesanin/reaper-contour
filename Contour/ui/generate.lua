@@ -680,14 +680,14 @@ function M.draw(ctx, state, detected)
       changed, g.edge = reaper.ImGui_SliderInt(ctx, "Edge##gen_edge", g.edge, 0, 100, "%d")
       acc(changed); acc(tickReset(ctx, g, "edge", 0, 100, 50))
     end
-    -- Attack only for AD (peak position, % of cycle).
-    if currentShapeId(g) == "ad" then
+    -- Attack for AD + Triangle (peak position, % of cycle).
+    if currentShapeId(g) == "ad" or currentShapeId(g) == "triangle" then
       changed, g.attack = reaper.ImGui_SliderInt(ctx, "Attack##gen_attack", g.attack, 1, 99, "%d")
       acc(changed); acc(tickReset(ctx, g, "attack", 1, 99, 50))
     end
-    -- Curve for Pump + AD + Saw Up/Down (ease steepness). Bipolar: 0 = linear, + bends one way, - the other.
+    -- Curve for Pump + AD + Saw Up/Down + Triangle (ease steepness). Bipolar: 0 = linear.
     if currentShapeId(g) == "pump" or currentShapeId(g) == "ad"
-       or currentShapeId(g) == "saw" or currentShapeId(g) == "sawdown" then
+       or currentShapeId(g) == "saw" or currentShapeId(g) == "sawdown" or currentShapeId(g) == "triangle" then
       changed, g.curve = reaper.ImGui_SliderInt(ctx, "Curve##gen_curve", g.curve, -100, 100, "%d")
       acc(changed); acc(tickReset(ctx, g, "curve", -100, 100, 0))
     end
