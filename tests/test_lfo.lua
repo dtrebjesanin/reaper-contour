@@ -532,6 +532,17 @@ h.test("rectsine is sparse with rounded-hump eases (crisp cusps)", function()
   h.truthy(cusps >= 2 and peaks >= 2, "two humps per cycle (got cusps=" .. cusps .. " peaks=" .. peaks .. ")")
 end)
 
+-- Trapezoid (and rectsine) honor Phase: shifting phase moves the waveform, so the value at the span
+-- start changes. (Was a no-op: the sparse emitters ignored phase entirely.)
+h.test("trapezoid honors phase", function()
+  local function startVal(ph)
+    local pts = lfo.generate({ t0 = 0, t1 = 4 }, { shape = "trapezoid",
+      rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0, edge = 0.25, phase = ph })
+    return pts[1].value
+  end
+  h.truthy(math.abs(startVal(0) - startVal(0.5)) > 0.5, "phase 0.5 should shift the trapezoid start value")
+end)
+
 -- Steps now quantizes a Saw into a real staircase: values collapse to ~N levels and the density is
 -- bumped so each level shows (previously Steps was a no-op on saw).
 h.test("steps quantizes a saw into a staircase", function()

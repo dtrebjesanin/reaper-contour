@@ -360,16 +360,17 @@ local function generateTrapezoid(t0, t1, spanLen, totalCycles, p, amp, baseV, am
     local half = ampHalf(amp, ampSkew, rel)
     pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = 1 }
   end
+  local phase = p.phase or 0   -- shape-phase = N*rel - phase  (same convention as emitAnchored)
   local corners = { { 0, -1 }, { e, 1 }, { 0.5, 1 }, { 0.5 + e, -1 } }   -- {phase, value} per cycle
   local samp = {}
-  for c = 0, ceil(N) do
+  for c = floor(-phase) - 1, ceil(N) + 1 do
     for _, k in ipairs(corners) do
-      local rel = (c + k[1]) / N
+      local rel = (c + k[1] + phase) / N
       if rel > 1e-9 and rel < 1 - 1e-9 then samp[#samp + 1] = { rel = rel, sv = k[2] } end
     end
   end
-  samp[#samp + 1] = { rel = 0, sv = shapes.value("trapezoid", 0, { edge = e }) }
-  samp[#samp + 1] = { rel = 1, sv = shapes.value("trapezoid", N, { edge = e }) }
+  samp[#samp + 1] = { rel = 0, sv = shapes.value("trapezoid", -phase, { edge = e }) }
+  samp[#samp + 1] = { rel = 1, sv = shapes.value("trapezoid", N - phase, { edge = e }) }
   table.sort(samp, function(a, b) return a.rel < b.rel end)
   local pts, lastRel = {}, nil
   for _, s in ipairs(samp) do
@@ -390,19 +391,20 @@ local function generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, amp
     local half = ampHalf(amp, ampSkew, rel)
     pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = shp }
   end
+  local phase = p.phase or 0   -- shape-phase = N*rel - phase  (same convention as emitAnchored)
   local anchors = { { 0, -1, 3 }, { 0.25, 1, 4 }, { 0.5, -1, 3 }, { 0.75, 1, 4 } }  -- {phase, value, ccShape}
   -- Ease for an arbitrary phase: a rising quarter ([0,.25) & [.5,.75)) leaves a cusp -> fast start (3);
   -- a falling quarter approaches a cusp -> fast end (4).
   local function easeAt(ph) local f = ph - floor(ph); return (f < 0.25 or (f >= 0.5 and f < 0.75)) and 3 or 4 end
   local samp = {}
-  for c = 0, ceil(N) do
+  for c = floor(-phase) - 1, ceil(N) + 1 do
     for _, k in ipairs(anchors) do
-      local rel = (c + k[1]) / N
+      local rel = (c + k[1] + phase) / N
       if rel > 1e-9 and rel < 1 - 1e-9 then samp[#samp + 1] = { rel = rel, sv = k[2], shp = k[3] } end
     end
   end
-  samp[#samp + 1] = { rel = 0, sv = shapes.value("rectsine", 0, {}), shp = easeAt(0) }
-  samp[#samp + 1] = { rel = 1, sv = shapes.value("rectsine", N, {}), shp = easeAt(N) }
+  samp[#samp + 1] = { rel = 0, sv = shapes.value("rectsine", -phase, {}), shp = easeAt(-phase) }
+  samp[#samp + 1] = { rel = 1, sv = shapes.value("rectsine", N - phase, {}), shp = easeAt(N - phase) }
   table.sort(samp, function(a, b) return a.rel < b.rel end)
   local pts, lastRel = {}, nil
   for _, s in ipairs(samp) do
