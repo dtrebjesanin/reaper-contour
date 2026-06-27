@@ -15,19 +15,26 @@ local M = {}
 local lfo    = require("core.lfo")
 local target = require("core.target")
 
--- Shape ids MUST match what core/shapes.lua / core/lfo.lua expect. This is REAPER's native
--- CC LFO basic-shape list, in the native order: None / Sine / Triangle / Saw / Square /
--- Parametric. "None" is FIRST and the DEFAULT (v2.1 U1): a NO-OP — picking it generates and
--- writes NOTHING (canGenerate=false), so the panel doesn't auto-write on first open until a
--- real shape is chosen. (Padre extras — sawdown, random/S&H, etc. — come in a later slice;
--- the engine still supports "sawup"/"sawdown"/"random" ids, they're just not in this list.)
+-- Shape ids MUST match what core/shapes.lua / core/lfo.lua expect. "None" is FIRST and the
+-- DEFAULT (v2.1 U1): a NO-OP — picking it generates and writes NOTHING (canGenerate=false),
+-- so the panel doesn't auto-write on first open until a real shape is chosen. Shapes are
+-- ordered by family: tonal (sine/triangle/saw/sawdown/square/trapezoid/parametric), harmonic
+-- (rectsine/sine²), dynamic (pump/ad), stochastic (random/drift).
 local SHAPES = {
   { id = "none",       label = "None" },
   { id = "sine",       label = "Sine" },
   { id = "triangle",   label = "Triangle" },
-  { id = "saw",        label = "Saw" },
+  { id = "saw",        label = "Saw Up" },
+  { id = "sawdown",    label = "Saw Down" },
   { id = "square",     label = "Square" },
+  { id = "trapezoid",  label = "Trapezoid" },
   { id = "parametric", label = "Parametric" },
+  { id = "rectsine",   label = "Rectified sine" },
+  { id = "sine2",      label = "Sine\xc2\xb2" },     -- "Sine²" (UTF-8 superscript two)
+  { id = "pump",       label = "Pump" },
+  { id = "ad",         label = "AD" },
+  { id = "random",     label = "Random (S&H)" },
+  { id = "drift",      label = "Drift" },
 }
 
 -- Build the null-separated combo string for the shape selector.
@@ -101,12 +108,22 @@ end
 -- shape ints: 0=step, 1=linear, 2=slow start/end, 3=fast start, 4=fast end, 5=bezier.
 -- ---------------------------------------------------------------------------
 local SHAPE_OUTPUT = {
-  none       = { ppc = 1, ccShape = 0 },  -- no-op; never reaches a write (gated by canGenerate)
-  sine       = { ppc = 8, ccShape = 2 },  -- slow start/end (anchored emitter; ppc ignored)
-  triangle   = { ppc = 2, ccShape = 1 },  -- linear; SAME points as sine
-  saw        = { ppc = 2, ccShape = 1 },  -- linear rising ramp + sharp reset
-  square     = { ppc = 2, ccShape = 0 },  -- step: one point per edge
-  parametric = { ppc = 4, ccShape = 4 },  -- fast-end at extrema / fast-start at mids (per-point)
+  none       = { ppc = 1,  ccShape = 0 },
+  sine       = { ppc = 8,  ccShape = 2 },
+  triangle   = { ppc = 2,  ccShape = 1 },
+  saw        = { ppc = 2,  ccShape = 1 },
+  square     = { ppc = 2,  ccShape = 0 },
+  parametric = { ppc = 4,  ccShape = 4 },
+  -- Generic-sampler shapes (no per-point shape tag) -> dense points + fallback CC shape:
+  sawdown    = { ppc = 16, ccShape = 1 },   -- descending ramp (linear)
+  trapezoid  = { ppc = 24, ccShape = 1 },   -- linear ramps + holds
+  rectsine   = { ppc = 24, ccShape = 1 },   -- humps approximated by dense linear points
+  sine2      = { ppc = 24, ccShape = 1 },
+  -- Dedicated emitters tag their own per-point shapes; ppc/ccShape here are inert fallbacks:
+  pump       = { ppc = 2,  ccShape = 1 },
+  ad         = { ppc = 2,  ccShape = 1 },
+  random     = { ppc = 1,  ccShape = 0 },
+  drift      = { ppc = 1,  ccShape = 2 },
 }
 local DEFAULT_OUTPUT = { ppc = 16, ccShape = 1 }
 
