@@ -72,4 +72,18 @@ h.test("randomAt varies by index", function()
   h.truthy(shapes.randomAt(42, 0) ~= shapes.randomAt(42, 1), "expected different values")
 end)
 
+-- REGRESSION: randomAt used to seed an LCG linearly by index, producing a staircase (near-constant
+-- consecutive deltas that wrap). Real noise must NOT march by a constant step and must spread the range.
+h.test("randomAt is noise, not a staircase", function()
+  local v = {}
+  for i = 0, 31 do v[i] = shapes.randomAt(12345, i) end
+  local d0 = v[1] - v[0]
+  local sameStep = 0
+  for i = 1, 31 do if math.abs((v[i] - v[i-1]) - d0) < 0.02 then sameStep = sameStep + 1 end end
+  h.truthy(sameStep < 10, "consecutive deltas are ~constant => staircase, not random")
+  local lo, hi = 2, -2
+  for i = 0, 31 do lo = math.min(lo, v[i]); hi = math.max(hi, v[i]) end
+  h.truthy(hi - lo > 1.0, "random values should spread across the range")
+end)
+
 h.run()

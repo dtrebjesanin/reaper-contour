@@ -62,7 +62,7 @@ function M.value(shape, t, p)
   return clamp(v, -1, 1)
 end
 
--- Deterministic LCG-based PRNG; returns a closure yielding (0,1).
+-- Deterministic LCG-based PRNG; returns a closure yielding (0,1). Kept for any external callers.
 function M.prng(seed)
   local state = (seed or 0) % 2147483647
   if state <= 0 then state = state + 2147483646 end
@@ -72,11 +72,20 @@ function M.prng(seed)
   end
 end
 
--- Deterministic value in [-1,1] for a (seed, cycle index) pair (sample & hold).
+-- splitmix64 finalizer: a strong integer mixing hash. Lua 5.4 integer ops wrap mod 2^64
+-- (two's complement), which is exactly what the hash wants.
+local function mix64(x)
+  x = (x ~ (x >> 30)) * 0xbf58476d1ce4e5b9
+  x = (x ~ (x >> 27)) * 0x94d049bb133111eb
+  return x ~ (x >> 31)
+end
+
+-- Deterministic value in [-1,1) for a (seed, cycle index) pair (sample & hold). Uses a hash so
+-- CONSECUTIVE indices decorrelate (the old LCG-seeded-by-index approach produced a staircase).
 function M.randomAt(seed, index)
-  local r = M.prng((seed or 0) + index * 2789 + 1)
-  r()                 -- discard first for mixing
-  return r() * 2 - 1
+  local h = mix64((seed or 0) * 0x9E3779B97F4A7C15 + (index or 0))
+  local u = (h & 0x1FFFFFFFFFFFFF) / 0x20000000000000  -- low 53 bits -> [0,1)
+  return u * 2 - 1
 end
 
 M._clamp = clamp
