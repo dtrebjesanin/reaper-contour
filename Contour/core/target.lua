@@ -153,25 +153,45 @@ local function deleteCCInRange(take, lane, chan, ppq0, ppq1)
   end
 end
 
--- Apply each written point's CC interpolation shape. Native uses DIFFERENT shapes per point (Sine:
--- slow start/end; Parametric: fast-end at extrema + fast-start at mids; Saw/Triangle: linear; Square:
--- step). REAPER only RENDERS a CC's shape once MIDI_SetCCShape is called — the flags nibble alone (and
--- the MIDI_InsertCC default) draws linear AND curve shapes as STEPS — so we set it explicitly here.
---
--- Map each event's shape by its PPQ TICK, not by list position. A positional 1:1 map drifts when
--- near-coincident points collapse onto the same tick — e.g. a saw's near-instant reset at high
--- frequency — leaving some events with the default step shape (the user-reported "saw/pump look like
--- squares, mixed at higher frequency"). Keying by tick (rounded the SAME way the writer rounds:
--- floor(ppq+0.5), clamped to [ppq0, ppq1-1]) is position- and count-independent. Guarded: skips if the
--- API is absent.
+-- Assign each point a STRICTLY-INCREASING integer ppq tick: clamp to [ppq0, ppq1-1], round
+-- (floor(ppq+0.5) — matching encodeMerged), then bump any tick that ties the previous one to prev+1.
+-- This stops two near-coincident points — e.g. a saw's reset (peak + instant drop) at short spans —
+-- from landing on the SAME tick, which REAPER drew as a STACKED DUPLICATE CC ("square" block) with a
+-- scrambled within-tick order (the user-reported "saw/pump look like squares"). Points are processed
+-- in TIME order (CC events are tick-positioned, so insertion order is irrelevant); the result is
+-- stored on pt._tick for both the writer and applyPointShapes. Mutates the point tables.
+local function assignTicks(take, points, ppq0, ppq1)
+  local floor = math.floor
+  local ordered = {}
+  for i = 1, #points do ordered[i] = points[i] end
+  table.sort(ordered, function(a, b) return (a.time or 0) < (b.time or 0) end)
+  local lastTick
+  for _, pt in ipairs(ordered) do
+    local ppq = reaper.MIDI_GetPPQPosFromProjTime(take, pt.time)
+    if ppq > ppq1 - 1 then ppq = ppq1 - 1 elseif ppq < ppq0 then ppq = ppq0 end
+    local tick = floor(ppq + 0.5)
+    if lastTick and tick <= lastTick then tick = lastTick + 1 end
+    lastTick = tick
+    pt._tick = tick
+  end
+end
+
+-- Apply each written point's CC interpolation shape (Sine: slow start/end; Parametric: fast eases;
+-- Saw/Triangle: linear; Square: step). REAPER only RENDERS a CC's shape once MIDI_SetCCShape is called,
+-- so we set it explicitly. Match each event to its shape by its PPQ TICK (assignTicks made them unique
+-- on pt._tick), so it is position- and count-independent. Guarded: skips if the API is absent.
 local function applyPointShapes(take, chan, lane, ppq0, ppq1, points)
   if not reaper.MIDI_SetCCShape then return end
   local floor = math.floor
   local byTick = {}
   for _, pt in ipairs(points) do
-    local ppq = reaper.MIDI_GetPPQPosFromProjTime(take, pt.time)
-    if ppq > ppq1 - 1 then ppq = ppq1 - 1 elseif ppq < ppq0 then ppq = ppq0 end
-    byTick[floor(ppq + 0.5)] = { shape = pt.shape or 1, tension = pt.tension or 0.0 }   -- last wins on ties
+    local tick = pt._tick
+    if not tick then
+      local ppq = reaper.MIDI_GetPPQPosFromProjTime(take, pt.time)
+      if ppq > ppq1 - 1 then ppq = ppq1 - 1 elseif ppq < ppq0 then ppq = ppq0 end
+      tick = floor(ppq + 0.5)
+    end
+    byTick[tick] = { shape = pt.shape or 1, tension = pt.tension or 0.0 }
   end
   local _, _, ccCount = reaper.MIDI_CountEvts(take)
   for i = 0, (ccCount or 0) - 1 do
@@ -212,17 +232,14 @@ function CC:write(points, t0, t1, opts)
     -- Clear the existing lane+channel CCs across the full range first (Replace mode).
     deleteCCInRange(take, writeLane, chan, ppq0, ppq1)
 
+    -- Strictly-increasing ticks (clamped 1 tick inside the selection so the last point's trailing
+    -- segment isn't clipped). De-colliding here keeps a saw's reset (peak + drop) on two ticks
+    -- instead of stacking a duplicate CC on one tick.
+    assignTicks(take, points, ppq0, ppq1)
     local written = 0
     for _, pt in ipairs(points) do
-      -- Keep every point 1 tick INSIDE the selection. A CC exactly at ppq1 (the selection end)
-      -- doesn't render its trailing segment and visually clips the end of the shape; native
-      -- places its last point ~1 tick before the end for the same reason. Only the final point
-      -- (engine emits it at t1) is actually affected; earlier points sit well inside.
-      local ppq = reaper.MIDI_GetPPQPosFromProjTime(take, pt.time)
-      if ppq > ppq1 - 1 then ppq = ppq1 - 1 end
-      if ppq < ppq0 then ppq = ppq0 end
       local val = clampCC(pt.value)
-      if reaper.MIDI_InsertCC(take, pt.sel and true or false, false, ppq, CC_STATUS, chan, writeLane, val) then
+      if reaper.MIDI_InsertCC(take, pt.sel and true or false, false, pt._tick, CC_STATUS, chan, writeLane, val) then
         written = written + 1
       end
     end
@@ -348,15 +365,14 @@ function CC:writeBulk(snapshot, points, t0, t1, opts)
     self._splitP0, self._splitP1 = ppq0, ppq1
   end
 
-  -- Build the new-CC list in ABSOLUTE ppq. Keep every point 1 tick INSIDE the selection: a CC
-  -- exactly at ppq1 doesn't render its trailing segment (clips the shape end); native places its
-  -- last point ~1 tick before the end. Only the final point (emitted at t1) is affected.
+  -- Build the new-CC list in ABSOLUTE ppq on STRICTLY-INCREASING ticks (assignTicks: clamped 1 tick
+  -- inside the selection, with any tie bumped to the next tick). This keeps a saw's reset (peak +
+  -- instant drop) on two adjacent ticks rather than stacking a duplicate CC on one tick (the "square"
+  -- block). pt._tick is reused by applyPointShapes so the shapes line up.
+  assignTicks(take, points, ppq0, ppq1)
   local newCCs = {}
   for _, pt in ipairs(points) do
-    local ppq = reaper.MIDI_GetPPQPosFromProjTime(take, pt.time)
-    if ppq > ppq1 - 1 then ppq = ppq1 - 1 end
-    if ppq < ppq0 then ppq = ppq0 end
-    newCCs[#newCCs + 1] = { ppq = ppq, value = clampCC(pt.value), shape = pt.shape or ccShape, sel = pt.sel }
+    newCCs[#newCCs + 1] = { ppq = pt._tick, value = clampCC(pt.value), shape = pt.shape or ccShape, sel = pt.sel }
   end
 
   -- The atomic body: merge the new CCs into the cached immutable list, encode, set once.
