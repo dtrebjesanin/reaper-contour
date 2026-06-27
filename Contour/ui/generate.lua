@@ -186,8 +186,8 @@ local DEFAULTS = {
   swing      = 0.0,
   steps      = 0,        -- 0 = off; >=2 quantizes any shape to N levels
   smooth     = 0,        -- 0..100 % blend toward sine
-  curve      = 0,        -- 0..100 (Pump/AD recovery/ease steepness)
-  attack     = 50,       -- 1..99 % of cycle (AD peak position)
+  curve      = 0,        -- -100..100 (Saw/Triangle bezier ease steepness; bipolar, 0 = linear)
+  attack     = 50,       -- 1..99 % of cycle (Triangle peak position)
   edge       = 50,       -- 0..100 % (Trapezoid edge width; /200 => [0,0.5])
   scope      = SCOPE_TIMESEL,  -- Time selection (0) vs Entire item/envelope (1)
 }
@@ -321,7 +321,7 @@ local function buildParams(g, spanT0, vmin, vmax)
     smooth        = (g.smooth or 0) / 100,                                  -- 0..1 blend toward sine
     quantizeSteps = (g.steps and g.steps >= 2) and g.steps or nil,         -- nil = off
     curve         = g.curve or 0,                                          -- Pump/AD ease (0..100)
-    attack        = g.attack or 50,                                        -- AD peak position (%)
+    attack        = g.attack or 50,                                        -- Triangle peak position (%)
     edge          = (g.edge or 50) / 200,                                  -- Trapezoid edge -> [0,0.5]
   }
   return params, ccShape
