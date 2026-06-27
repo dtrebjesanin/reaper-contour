@@ -11,18 +11,19 @@ h.test("sine quarters", function()
   h.almost(shapes.value("sine", 0.75, {}), 0, 1e-9)
 end)
 
--- square (default 50% duty): first half +1, second half -1
+-- square (default 50% duty): starts LOW, HIGH in the last pw -- matches the native square emitter
+-- (generateSquare) so toggling Smooth doesn't flip the wave.
 h.test("square halves", function()
-  h.eq(shapes.value("square", 0.1, {}), 1)
-  h.eq(shapes.value("square", 0.6, {}), -1)
+  h.eq(shapes.value("square", 0.1, {}), -1)
+  h.eq(shapes.value("square", 0.6, {}), 1)
 end)
 
--- triangle: 0->0, .25->1, .5->0, .75->-1
+-- triangle (trough-start, -cos phase, matching the anchored triangle): 0->-1, .25->0, .5->1, .75->0
 h.test("triangle peaks", function()
-  h.almost(shapes.value("triangle", 0.0, {}), 0)
-  h.almost(shapes.value("triangle", 0.25, {}), 1)
-  h.almost(shapes.value("triangle", 0.5, {}), 0)
-  h.almost(shapes.value("triangle", 0.75, {}), -1)
+  h.almost(shapes.value("triangle", 0.0, {}), -1)
+  h.almost(shapes.value("triangle", 0.25, {}), 0)
+  h.almost(shapes.value("triangle", 0.5, {}), 1)
+  h.almost(shapes.value("triangle", 0.75, {}), 0)
 end)
 
 -- saws span -1..1
@@ -36,10 +37,10 @@ h.test("none is flat zero", function()
   h.eq(shapes.value("none", 0.3, {}), 0)
 end)
 
--- pulse width changes square duty
+-- pulse width changes square duty: HIGH occupies the LAST pw of the cycle (low first)
 h.test("pulse width duty", function()
-  h.eq(shapes.value("square", 0.2, { pulseWidth = 0.25 }), 1)
-  h.eq(shapes.value("square", 0.3, { pulseWidth = 0.25 }), -1)
+  h.eq(shapes.value("square", 0.5, { pulseWidth = 0.25 }), -1)   -- LOW until the final 25%
+  h.eq(shapes.value("square", 0.8, { pulseWidth = 0.25 }), 1)    -- HIGH in the final pw
 end)
 
 -- NATIVE MATCH (v2.4): freqSkew + ampSkew are now GLOBAL modulators in lfo.generate,
@@ -55,7 +56,7 @@ end)
 
 -- smooth=0 leaves the triangle unchanged; smooth=1 makes it equal sine (-cos phasing).
 h.test("smooth blends to sine", function()
-  h.almost(shapes.value("triangle", 0.1, { smooth = 0 }), 0.4)        -- 4*0.1
+  h.almost(shapes.value("triangle", 0.1, { smooth = 0 }), -0.6)       -- -1 + 4*0.1 (trough-start)
   h.almost(shapes.value("triangle", 0.1, { smooth = 1 }), -math.cos(2 * math.pi * 0.1))
 end)
 

@@ -543,6 +543,35 @@ h.test("trapezoid honors phase", function()
   h.truthy(math.abs(startVal(0) - startVal(0.5)) > 0.5, "phase 0.5 should shift the trapezoid start value")
 end)
 
+-- Steps/Smooth must NOT shift a shape's phase: routing triangle/square to the generic sampler now
+-- starts at the SAME value as the dedicated emitter (was the user-reported "out of phase" / flip bug).
+h.test("steps/smooth preserve triangle & square phase", function()
+  local function startVal(shape, mods)
+    local p = { shape = shape, rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0 }
+    for k, v in pairs(mods or {}) do p[k] = v end
+    return lfo.generate({ t0 = 0, t1 = 4 }, p)[1].value
+  end
+  h.almost(startVal("triangle", {}), startVal("triangle", { smooth = 0.5 }), 1e-6, "triangle smooth phase")
+  h.almost(startVal("triangle", {}), startVal("triangle", { quantizeSteps = 4 }), 1e-6, "triangle steps phase")
+  h.almost(startVal("square", {}),   startVal("square",   { smooth = 0.5 }), 1e-6, "square smooth phase flip")
+end)
+
+-- Trapezoid (and rectsine) now respond to Swing and Freq skew: corner TIMES warp, point count stable.
+h.test("trapezoid responds to swing and freq skew", function()
+  local function times(mods)
+    local p = { shape = "trapezoid", rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0, edge = 0.25 }
+    for k, v in pairs(mods) do p[k] = v end
+    local t = {}; for _, pp in ipairs(lfo.generate({ t0 = 0, t1 = 4 }, p)) do t[#t + 1] = pp.time end
+    return t
+  end
+  local plain, swung, skewed = times({}), times({ swing = 0.6 }), times({ freqSkew = 0.6 })
+  h.eq(#swung, #plain, "swing keeps trapezoid point count")
+  h.eq(#skewed, #plain, "freq skew keeps trapezoid point count")
+  local function moved(a, b) for i = 1, #a do if math.abs(a[i] - b[i]) > 1e-6 then return true end end return false end
+  h.truthy(moved(plain, swung), "swing should move trapezoid corner times")
+  h.truthy(moved(plain, skewed), "freq skew should move trapezoid corner times")
+end)
+
 -- Steps now quantizes a Saw into a real staircase: values collapse to ~N levels and the density is
 -- bumped so each level shows (previously Steps was a no-op on saw).
 h.test("steps quantizes a saw into a staircase", function()

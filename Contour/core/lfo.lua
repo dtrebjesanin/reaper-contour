@@ -139,6 +139,16 @@ function M.freqWarp(rel, s_f)
   return prog
 end
 
+-- swingWarp: intra-cycle sample-phase sp -> g(sp), moving the 0.5 point to 0.5 + swing*0.25 (each
+-- half mapped linearly). Identity when swing=0. Shared by every sparse emitter (anchored
+-- sine/triangle/parametric, square, trapezoid, rectsine) so swing behaves identically across them.
+function M.swingWarp(sp, swing)
+  if not swing or swing == 0 then return sp end
+  local m = 0.5 + swing * 0.25
+  if sp <= 0.5 then return sp * (m / 0.5) end
+  return m + (sp - 0.5) * ((1 - m) / 0.5)
+end
+
 -- half(rel): global amplitude ramp anchored by amp skew s_a in [-1,1].
 local function ampHalf(baseHalf, s_a, rel)
   if not s_a or s_a == 0 then return baseHalf end
@@ -201,21 +211,12 @@ local function emitAnchored(shape, t0, t1, spanLen, totalCycles, p, amp, baseV, 
     return 2
   end
 
-  -- Swing warps an intra-cycle sample-phase sp -> g(sp): the sp=0.5 point moves to
-  -- m = 0.5 + swing*0.25; each half maps linearly. Identity when swing=0.
-  local function swingWarp(sp)
-    if swing == 0 then return sp end
-    local m = 0.5 + swing * 0.25
-    if sp <= 0.5 then return sp * (m / 0.5) end
-    return m + (sp - 0.5) * ((1 - m) / 0.5)
-  end
-
-  -- Collect {rel, sv, shp}. A sample at phase position pp = c + g(sp) has time-progress
+  -- Collect {rel, sv, shp}. A sample at phase position pp = c + swingWarp(sp) has time-progress
   -- prog = (pp + phase)/N which must lie in the OPEN (0,1) (the 0/1 edges are anchors).
   local samp = {}
   for c = floor(-phase) - 1, ceil(N) + 1 do
     for _, sp in ipairs(sampleSet) do
-      local prog = (c + swingWarp(sp) + phase) / N
+      local prog = (c + M.swingWarp(sp, swing) + phase) / N
       if prog > 1e-9 and prog < 1 - 1e-9 then
         samp[#samp + 1] = { rel = M.freqWarpInverse(prog, freqSkew), sv = -cos(2 * pi * sp), shp = shapeFor(sp) }
       end
@@ -263,14 +264,6 @@ local function generateSquare(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSk
     local half = ampHalf(amp, ampSkew, rel)
     return baseV + half * sv * depth + tiltOffset * rel
   end
-  -- Swing shifts the HIGH (step-up) edge like the sine peak: cycle-fraction 0.5 -> 0.5+swing*0.25,
-  -- piecewise-linear; cycle starts (sp=0) are unmoved.
-  local function swingWarp(sp)
-    if swing == 0 then return sp end
-    local m = 0.5 + swing * 0.25
-    if sp <= 0.5 then return sp * (m / 0.5) end
-    return m + (sp - 0.5) * ((1 - m) / 0.5)
-  end
   -- Value the step holds at fractional shape-phase x: LOW in [0,hi), HIGH in [hi,1).
   local function heldValue(x) local f = x - floor(x); return (f < hi - 1e-9) and -1 or 1 end
 
@@ -279,11 +272,11 @@ local function generateSquare(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSk
   -- the held-value anchor; the step holds to t1 so there is no rel=1 point).
   local samp = {}
   for k = floor(-phase) - 1, ceil(N) + 1 do
-    local progLo = (k + swingWarp(0) + phase) / N
+    local progLo = (k + M.swingWarp(0, swing) + phase) / N
     if progLo > 1e-9 and progLo < 1 - 1e-9 then
       samp[#samp + 1] = { rel = M.freqWarpInverse(progLo, freqSkew), sv = -1 }
     end
-    local progHi = (k + swingWarp(hi) + phase) / N
+    local progHi = (k + M.swingWarp(hi, swing) + phase) / N
     if progHi > 1e-9 and progHi < 1 - 1e-9 then
       samp[#samp + 1] = { rel = M.freqWarpInverse(progHi, freqSkew), sv = 1 }
     end
@@ -349,10 +342,13 @@ end
 
 -- Trapezoid: SPARSE emitter placing points only at the 4 corners per cycle (trough, ramp-up end,
 -- hold end, ramp-down end), linear between. edge in [0,0.5]: ~0 = near-square, 0.5 = triangle. amp
--- skew / tilt / fade apply; phase/swing/freq-skew are not warped (utility shape). Span edges are
--- anchored from the waveform value so coverage runs t0..t1.
-local function generateTrapezoid(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
+-- skew / tilt / fade apply. PHASE/SWING/FREQ-SKEW warp the corner TIMES via the same prog->rel
+-- mapping as emitAnchored (swingWarp on the intra-cycle phase, freqWarpInverse across the span); the
+-- corner VALUES are unchanged. Span edges are anchored from the waveform value so coverage runs t0..t1.
+local function generateTrapezoid(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   local N = totalCycles
+  local phase = p.phase or 0   -- shape-phase = N*rel - phase  (same convention as emitAnchored)
+  local swing = max(-1, min(1, p.swing or 0))
   local e = p.edge or 0.25
   if e > 0.5 then e = 0.5 elseif e < 0.001 then e = 0.001 end   -- avoid the degenerate edge=0 case
   local function emit(pts, rel, sv)
@@ -360,13 +356,14 @@ local function generateTrapezoid(t0, t1, spanLen, totalCycles, p, amp, baseV, am
     local half = ampHalf(amp, ampSkew, rel)
     pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = 1 }
   end
-  local phase = p.phase or 0   -- shape-phase = N*rel - phase  (same convention as emitAnchored)
   local corners = { { 0, -1 }, { e, 1 }, { 0.5, 1 }, { 0.5 + e, -1 } }   -- {phase, value} per cycle
   local samp = {}
   for c = floor(-phase) - 1, ceil(N) + 1 do
     for _, k in ipairs(corners) do
-      local rel = (c + k[1] + phase) / N
-      if rel > 1e-9 and rel < 1 - 1e-9 then samp[#samp + 1] = { rel = rel, sv = k[2] } end
+      local prog = (c + M.swingWarp(k[1], swing) + phase) / N
+      if prog > 1e-9 and prog < 1 - 1e-9 then
+        samp[#samp + 1] = { rel = M.freqWarpInverse(prog, freqSkew), sv = k[2] }
+      end
     end
   end
   samp[#samp + 1] = { rel = 0, sv = shapes.value("trapezoid", -phase, { edge = e }) }
@@ -383,15 +380,17 @@ end
 -- and peaks (+1, at 0.25/0.75) per cycle. A point's CC shape governs the OUTGOING segment, so cusps
 -- get fast START (steep leaving the sharp bottom, flattening into the peak) and peaks get fast END
 -- (flat at the peak, steepening into the next cusp) -> ROUNDED humps with crisp cusps. Amp skew /
--- tilt / fade apply. Smooth/Steps route it to the generic sampler instead.
-local function generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
+-- tilt / fade apply. PHASE/SWING/FREQ-SKEW warp the anchor TIMES (same prog->rel mapping as
+-- emitAnchored); values/eases are unchanged. Smooth/Steps route it to the generic sampler instead.
+local function generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   local N = totalCycles
+  local phase = p.phase or 0   -- shape-phase = N*rel - phase  (same convention as emitAnchored)
+  local swing = max(-1, min(1, p.swing or 0))
   local function emit(pts, rel, sv, shp)
     local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
     local half = ampHalf(amp, ampSkew, rel)
     pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = shp }
   end
-  local phase = p.phase or 0   -- shape-phase = N*rel - phase  (same convention as emitAnchored)
   local anchors = { { 0, -1, 3 }, { 0.25, 1, 4 }, { 0.5, -1, 3 }, { 0.75, 1, 4 } }  -- {phase, value, ccShape}
   -- Ease for an arbitrary phase: a rising quarter ([0,.25) & [.5,.75)) leaves a cusp -> fast start (3);
   -- a falling quarter approaches a cusp -> fast end (4).
@@ -399,8 +398,10 @@ local function generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, amp
   local samp = {}
   for c = floor(-phase) - 1, ceil(N) + 1 do
     for _, k in ipairs(anchors) do
-      local rel = (c + k[1] + phase) / N
-      if rel > 1e-9 and rel < 1 - 1e-9 then samp[#samp + 1] = { rel = rel, sv = k[2], shp = k[3] } end
+      local prog = (c + M.swingWarp(k[1], swing) + phase) / N
+      if prog > 1e-9 and prog < 1 - 1e-9 then
+        samp[#samp + 1] = { rel = M.freqWarpInverse(prog, freqSkew), sv = k[2], shp = k[3] }
+      end
     end
   end
   samp[#samp + 1] = { rel = 0, sv = shapes.value("rectsine", -phase, {}), shp = easeAt(-phase) }
@@ -583,12 +584,12 @@ function M.generate(span, params)
 
   -- TRAPEZOID: sparse 4-corner emitter (routes to the generic sampler only when smooth/quantize bend it).
   if p.shape == "trapezoid" and (p.smooth or 0) == 0 and not p.quantizeSteps then
-    return generateTrapezoid(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
+    return generateTrapezoid(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   end
 
   -- RECTIFIED SINE: sparse |sin| humps (rounded, with crisp cusps). Smooth/Steps route to generic.
   if p.shape == "rectsine" and (p.smooth or 0) == 0 and not p.quantizeSteps then
-    return generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
+    return generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   end
 
   -- Generic ppc sampler (smoothed/quantized waveforms, plus rectsine/sine2 when a modifier bends them).

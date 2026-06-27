@@ -14,11 +14,13 @@ local base = {}
 --   t=0   -> -1 (trough),  t=0.25 -> 0,  t=0.5 -> +1 (peak),  t=0.75 -> 0.
 -- The extremum point placement in lfo.generate relies on this phasing.
 function base.sine(t) return -cos(2 * pi * t) end
-function base.square(t, pw) pw = pw or 0.5; return (t < pw) and 1 or -1 end
+-- Square / triangle MATCH their dedicated emitters' phase (so toggling Smooth/Steps, which routes
+-- them through this generic path, never flips or shifts the wave): the native square starts LOW with
+-- the HIGH portion in the LAST pw of the cycle; the triangle starts at the TROUGH (-1) and peaks at
+-- mid-cycle, i.e. the -cos phase the anchored triangle uses.
+function base.square(t, pw) pw = pw or 0.5; return (t < 1 - pw) and -1 or 1 end
 function base.triangle(t)
-  if t < 0.25 then return 4 * t
-  elseif t < 0.75 then return 2 - 4 * t
-  else return 4 * t - 4 end
+  if t < 0.5 then return -1 + 4 * t else return 3 - 4 * t end
 end
 function base.sawup(t) return 2 * t - 1 end
 function base.sawdown(t) return 1 - 2 * t end
