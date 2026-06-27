@@ -153,33 +153,34 @@ local function deleteCCInRange(take, lane, chan, ppq0, ppq1)
   end
 end
 
--- Apply each written point's CC interpolation shape. Native uses DIFFERENT shapes per point
--- (Parametric: fast-end at extrema + fast-start at mids; Sine: slow start/end; Saw/Triangle:
--- linear; Square: step), so we map the i-th in-range CC (ppq-ascending) to points[i].shape via
--- MIDI_SetCCShape (which renders the ease/bezier correctly — the flags nibble alone draws curve
--- shapes as straight lines). We delete the range before inserting, so in-range CCs correspond 1:1
--- with the (time-ascending) points. Guarded: skips silently if MIDI_SetCCShape is absent.
+-- Apply each written point's CC interpolation shape. Native uses DIFFERENT shapes per point (Sine:
+-- slow start/end; Parametric: fast-end at extrema + fast-start at mids; Saw/Triangle: linear; Square:
+-- step). REAPER only RENDERS a CC's shape once MIDI_SetCCShape is called — the flags nibble alone (and
+-- the MIDI_InsertCC default) draws linear AND curve shapes as STEPS — so we set it explicitly here.
+--
+-- Map each event's shape by its PPQ TICK, not by list position. A positional 1:1 map drifts when
+-- near-coincident points collapse onto the same tick — e.g. a saw's near-instant reset at high
+-- frequency — leaving some events with the default step shape (the user-reported "saw/pump look like
+-- squares, mixed at higher frequency"). Keying by tick (rounded the SAME way the writer rounds:
+-- floor(ppq+0.5), clamped to [ppq0, ppq1-1]) is position- and count-independent. Guarded: skips if the
+-- API is absent.
 local function applyPointShapes(take, chan, lane, ppq0, ppq1, points)
   if not reaper.MIDI_SetCCShape then return end
+  local floor = math.floor
+  local byTick = {}
+  for _, pt in ipairs(points) do
+    local ppq = reaper.MIDI_GetPPQPosFromProjTime(take, pt.time)
+    if ppq > ppq1 - 1 then ppq = ppq1 - 1 elseif ppq < ppq0 then ppq = ppq0 end
+    byTick[floor(ppq + 0.5)] = { shape = pt.shape or 1, tension = pt.tension or 0.0 }   -- last wins on ties
+  end
   local _, _, ccCount = reaper.MIDI_CountEvts(take)
-  local inRange = {}
   for i = 0, (ccCount or 0) - 1 do
     local ok, _, _, ppqpos, chanmsg, ch, msg2 = reaper.MIDI_GetCC(take, i)
     if ok and chanmsg == CC_STATUS and ch == chan and msg2 == lane
        and ppqpos >= ppq0 and ppqpos <= ppq1 then
-      inRange[#inRange + 1] = { idx = i, ppq = ppqpos }
+      local s = byTick[floor(ppqpos + 0.5)]
+      if s then reaper.MIDI_SetCCShape(take, i, s.shape, s.tension, true) end
     end
-  end
-  table.sort(inRange, function(a, b) return a.ppq < b.ppq end)
-  -- `points` may arrive in insertion order (e.g. transformed region then appended "keep" points), NOT ppq
-  -- order. Sort a copy by time so the k-th ppq-ascending written CC takes the k-th time-ascending point's
-  -- shape — otherwise curve shapes (>=2) land on the wrong events when keep points are present.
-  local sorted = {}
-  for i = 1, #points do sorted[i] = points[i] end
-  table.sort(sorted, function(a, b) return (a.time or 0) < (b.time or 0) end)
-  local n = math.min(#inRange, #sorted)
-  for k = 1, n do
-    reaper.MIDI_SetCCShape(take, inRange[k].idx, sorted[k].shape or 1, sorted[k].tension or 0.0, true)
   end
   reaper.MIDI_Sort(take)
 end
