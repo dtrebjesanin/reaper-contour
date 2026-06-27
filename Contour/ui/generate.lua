@@ -114,12 +114,12 @@ local SHAPE_OUTPUT = {
   saw        = { ppc = 2,  ccShape = 1 },
   square     = { ppc = 2,  ccShape = 0 },
   parametric = { ppc = 4,  ccShape = 4 },
-  -- Saw Down & Trapezoid now have dedicated SPARSE emitters; ppc/ccShape here are only the fallback
-  -- for the rare smooth/quantize path:
+  -- Saw Down / Trapezoid / Rectified sine / Sine² have dedicated SPARSE emitters that tag their own
+  -- per-point shapes; ppc/ccShape here are only the fallback for the smooth/quantize generic path:
   sawdown    = { ppc = 2,  ccShape = 1 },   -- descending ramp (sparse emitter)
   trapezoid  = { ppc = 8,  ccShape = 1 },   -- 4-corner sparse emitter
-  rectsine   = { ppc = 8,  ccShape = 1 },   -- curvy: generic sampler at modest density
-  sine2      = { ppc = 4,  ccShape = 3 },   -- anchored emitter (parametric-style, swapped eases)
+  rectsine   = { ppc = 8,  ccShape = 1 },   -- |sin| humps: 4-anchor emitter (fast-start/fast-end)
+  sine2      = { ppc = 4,  ccShape = 2 },   -- peakier sine: 4-anchor emitter (slow start/end)
   -- Dedicated emitters tag their own per-point shapes; ppc/ccShape here are inert fallbacks:
   pump       = { ppc = 2,  ccShape = 1 },
   ad         = { ppc = 2,  ccShape = 1 },

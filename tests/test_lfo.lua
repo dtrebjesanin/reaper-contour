@@ -508,20 +508,28 @@ h.test("trapezoid is sparse with corner values", function()
   end
 end)
 
--- Sine2: anchored + SPARSE (4 samples/cycle like parametric) with SWAPPED eases — extrema (value
--- +/-1) take fast START (3), zero-crossings (value 0) take fast END (4): the pinched/peakier curve
--- (not the triangle the old dense-sampled version aliased to).
-h.test("sine2 is sparse with swapped (pinched) eases", function()
+-- Sine2: anchored + SPARSE (4 samples/cycle, values -1,0,+1,0 like parametric) with SLOW start/end
+-- (shape 2) on EVERY point. The s^2 curve has a flat tangent at all four quarter points, so flat-
+-- ended S-curves between them read as a smooth, centre-flattened sine (not a spike, not a triangle).
+h.test("sine2 is sparse and smoothly eased (no spike)", function()
   local pts = lfo.generate({ t0 = 0, t1 = 2 },
     { shape = "sine2", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0 })
   h.truthy(#pts <= 12, "sine2 must be sparse (got " .. #pts .. ")")
+  for _, p in ipairs(pts) do h.eq(p.shape, 2, "every sine2 point uses slow start/end") end
+end)
+
+-- Rectified sine: sparse |sin| humps. Cusps (value -1) get fast START (3) so they leave the sharp
+-- bottom steeply and round into the peak; peaks (value +1) get fast END (4). Two humps per cycle.
+h.test("rectsine is sparse with rounded-hump eases (crisp cusps)", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 2 },
+    { shape = "rectsine", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0 })
+  h.truthy(#pts <= 12, "rectsine must be sparse (got " .. #pts .. ")")
+  local cusps, peaks = 0, 0
   for _, p in ipairs(pts) do
-    if math.abs(math.abs(p.value) - 1) < 1e-6 then
-      h.eq(p.shape, 3, "extremum -> fast start")
-    elseif math.abs(p.value) < 1e-6 then
-      h.eq(p.shape, 4, "zero-cross -> fast end")
-    end
+    if math.abs(p.value - (-1)) < 1e-6 then h.eq(p.shape, 3, "cusp -> fast start"); cusps = cusps + 1
+    elseif math.abs(p.value - 1) < 1e-6 then h.eq(p.shape, 4, "peak -> fast end"); peaks = peaks + 1 end
   end
+  h.truthy(cusps >= 2 and peaks >= 2, "two humps per cycle (got cusps=" .. cusps .. " peaks=" .. peaks .. ")")
 end)
 
 -- Steps now quantizes a Saw into a real staircase: values collapse to ~N levels and the density is

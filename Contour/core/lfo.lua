@@ -192,11 +192,11 @@ local function emitAnchored(shape, t0, t1, spanLen, totalCycles, p, amp, baseV, 
       return ext and 4 or 3
     end
     if shape == "sine2" then
-      -- Sine² (peakier sine): the OPPOSITE eases to parametric — fast START at the extrema (steep
-      -- leaving +/-1) and fast END at the zero-crossings (flat through 0), giving the pinched,
-      -- steep-at-the-peaks curvature. Same -cos anchor values as parametric.
-      local ext = (sp < 1e-9) or (abs(sp - 0.5) < 1e-9)
-      return ext and 3 or 4
+      -- Sine² (peakier sine): same -cos anchors as parametric (-1,0,+1,0 at the quarter phases) but
+      -- SLOW start/end on EVERY point. The s^2 curve has a flat tangent at all four (slope 0 at the
+      -- extrema AND the zero-crossings), so flat-ended S-curves between them read as a smooth, centre-
+      -- flattened sine -- NOT the spike that fast eases produced.
+      return 2
     end
     return 2
   end
@@ -378,6 +378,39 @@ local function generateTrapezoid(t0, t1, spanLen, totalCycles, p, amp, baseV, am
   return pts
 end
 
+-- Rectified sine: |sin| humps (two per cycle). SPARSE anchored emitter — cusps (-1, at phase 0/0.5)
+-- and peaks (+1, at 0.25/0.75) per cycle. A point's CC shape governs the OUTGOING segment, so cusps
+-- get fast START (steep leaving the sharp bottom, flattening into the peak) and peaks get fast END
+-- (flat at the peak, steepening into the next cusp) -> ROUNDED humps with crisp cusps. Amp skew /
+-- tilt / fade apply. Smooth/Steps route it to the generic sampler instead.
+local function generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
+  local N = totalCycles
+  local function emit(pts, rel, sv, shp)
+    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
+    local half = ampHalf(amp, ampSkew, rel)
+    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = shp }
+  end
+  local anchors = { { 0, -1, 3 }, { 0.25, 1, 4 }, { 0.5, -1, 3 }, { 0.75, 1, 4 } }  -- {phase, value, ccShape}
+  -- Ease for an arbitrary phase: a rising quarter ([0,.25) & [.5,.75)) leaves a cusp -> fast start (3);
+  -- a falling quarter approaches a cusp -> fast end (4).
+  local function easeAt(ph) local f = ph - floor(ph); return (f < 0.25 or (f >= 0.5 and f < 0.75)) and 3 or 4 end
+  local samp = {}
+  for c = 0, ceil(N) do
+    for _, k in ipairs(anchors) do
+      local rel = (c + k[1]) / N
+      if rel > 1e-9 and rel < 1 - 1e-9 then samp[#samp + 1] = { rel = rel, sv = k[2], shp = k[3] } end
+    end
+  end
+  samp[#samp + 1] = { rel = 0, sv = shapes.value("rectsine", 0, {}), shp = easeAt(0) }
+  samp[#samp + 1] = { rel = 1, sv = shapes.value("rectsine", N, {}), shp = easeAt(N) }
+  table.sort(samp, function(a, b) return a.rel < b.rel end)
+  local pts, lastRel = {}, nil
+  for _, s in ipairs(samp) do
+    if lastRel == nil or s.rel - lastRel > 1e-6 then emit(pts, s.rel, s.sv, s.shp); lastRel = s.rel end
+  end
+  return pts
+end
+
 -- Random (Sample & Hold) and Drift (smooth random) share one emitter: one random value per cycle
 -- (shapes.randomAt(seed, cycleIndex)). They differ only in interpolation between cycle values:
 -- S&H holds flat (step CC shape 0); Drift eases (slow start/end CC shape 2). Sparse: one anchor per
@@ -551,7 +584,12 @@ function M.generate(span, params)
     return generateTrapezoid(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
   end
 
-  -- Generic ppc sampler (smoothed/quantized waveforms, plus the curvy rectsine/sine2 at low density).
+  -- RECTIFIED SINE: sparse |sin| humps (rounded, with crisp cusps). Smooth/Steps route to generic.
+  if p.shape == "rectsine" and (p.smooth or 0) == 0 and not p.quantizeSteps then
+    return generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
+  end
+
+  -- Generic ppc sampler (smoothed/quantized waveforms, plus rectsine/sine2 when a modifier bends them).
   -- Flows through the GLOBAL value model: amp-skew ramp on the half-amplitude, freq-skew
   -- phase warp on the cycle position, value-unit tilt offset. PHASE is subtracted (native
   -- delays for +phase: shape-phase = totalCycles*warp(rel) - phase), consistent with
