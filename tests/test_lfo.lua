@@ -543,6 +543,18 @@ h.test("trapezoid honors phase", function()
   h.truthy(math.abs(startVal(0) - startVal(0.5)) > 0.5, "phase 0.5 should shift the trapezoid start value")
 end)
 
+-- Saw (and Saw Down) honor Phase: shifting phase moves the ramp, changing the span-start value.
+-- Phase 0 stays byte-identical to the native saw (guarded by test_native_match).
+h.test("saw honors phase", function()
+  local function startVal(shape, ph)
+    local pts = lfo.generate({ t0 = 0, t1 = 4 }, { shape = shape,
+      rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0, phase = ph })
+    return pts[1].value
+  end
+  h.truthy(math.abs(startVal("saw", 0) - startVal("saw", 0.5)) > 0.5, "saw phase 0.5 shifts the start value")
+  h.truthy(math.abs(startVal("sawdown", 0) - startVal("sawdown", 0.5)) > 0.5, "saw down phase shifts too")
+end)
+
 -- Steps/Smooth must NOT shift a shape's phase: routing triangle/square to the generic sampler now
 -- starts at the SAME value as the dedicated emitter (was the user-reported "out of phase" / flip bug).
 h.test("steps/smooth preserve triangle & square phase", function()

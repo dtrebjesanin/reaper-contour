@@ -309,6 +309,7 @@ end
 -- direction (lo/hi); the desc=false path is byte-identical to the original native saw.
 local function generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset, desc)
   local N = totalCycles
+  local phase = p.phase or 0
   local swing = max(-1, min(1, p.swing or 0))
   local eps = 1e-4                             -- ~1 tick reset gap (the writer snaps to the grid)
   local lo, hi = -1, 1                         -- Saw Up: trough -> peak
@@ -319,22 +320,29 @@ local function generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew,
     local half = ampHalf(amp, ampSkew, rel)
     pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = 1 }
   end
-  -- Raw cycle-position of the c-th reset boundary (odd boundaries swing-shifted), then freq-warped.
-  local function boundaryCP(c) return (c % 2 == 1) and (c + swing * 0.5) or c end
+  -- Ramp value at cycle-position cp: PHASE shifts the waveform (shape-phase = cp - phase); each cycle
+  -- ramps lo -> hi. Used for the partial values at the span edges.
+  local function rampVal(cp) local f = cp - phase; f = f - floor(f); return lo + (hi - lo) * f end
+  -- Cycle-position of the j-th reset boundary: (j + phase), with odd-index resets swing-shifted by
+  -- swing*0.5 (the pair feel). At phase=0 this is exactly the old boundaryCP, and the j=1 start +
+  -- rampVal(0)=lo make the whole emitter byte-identical to the native saw.
+  local function resetCP(j) return (j % 2 == 1) and (j + phase + swing * 0.5) or (j + phase) end
   local pts = {}
-  emit(pts, 0, lo)                             -- first ramp start
-  local c = 1
+  emit(pts, 0, rampVal(0))                     -- partial ramp value at the span start (lo when phase=0)
+  local j = (phase > 1e-9) and 0 or 1          -- phase>0 can place a reset inside the first cycle
   while true do
-    local prog = boundaryCP(c) / N
+    local prog = resetCP(j) / N
     if prog >= 1 - 1e-9 then break end
-    local relB = M.freqWarpInverse(prog, freqSkew)
-    emit(pts, relB, hi)                        -- ramp end of cycle c-1
-    emit(pts, relB + eps, lo)                  -- reset (cycle c start)
-    c = c + 1
+    if prog > 1e-9 then
+      local relB = M.freqWarpInverse(prog, freqSkew)
+      emit(pts, relB, hi)                       -- ramp end (peak)
+      emit(pts, relB + eps, lo)                -- reset (next trough)
+    end
+    j = j + 1
   end
-  -- Final point at the span end = the ramp value at the SWUNG end position (integer -> hi; partial
-  -- -> a partial ramp value interpolated lo->hi).
-  local endCP = M.swingCyclePos(N, swing)
+  -- Final point at the span end = the partial ramp value at the SWUNG, phase-shifted end position
+  -- (a whole cycle -> hi, the ramp peak; a partial cycle -> interpolated lo->hi).
+  local endCP = M.swingCyclePos(N, swing) - phase
   local fracEnd = endCP - floor(endCP)
   emit(pts, 1, (fracEnd < 1e-9) and hi or (lo + (hi - lo) * fracEnd))
   return pts
