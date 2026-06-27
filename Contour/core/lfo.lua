@@ -183,7 +183,7 @@ local function emitAnchored(shape, t0, t1, spanLen, totalCycles, p, amp, baseV, 
   -- bipolar. Other shapes ignore these.
   local triA = max(0.01, min(0.99, (p.attack or 50) / 100))
   local triCurve = max(-1, min(1, (p.curve or 0) / 100))
-  local triTension = triCurve * 0.9
+  local triTension = (shape == "triangle") and (triCurve * 0.9) or 0
   local triShape = (shape == "triangle") and ((abs(triCurve) > 1e-9) and 5 or 1) or nil
   local sampleSet =
         (shape == "triangle") and { 0, triA }

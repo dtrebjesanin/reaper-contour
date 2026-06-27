@@ -655,7 +655,7 @@ end)
 h.test("triangle attack moves the peak; default stays linear", function()
   local def = lfo.generate({ t0 = 0, t1 = 1 },
     { shape = "triangle", rate = { mode = "free", cycles = 1 }, amplitude = 1, baseline = 0 })
-  for _, p in ipairs(def) do h.eq(p.shape, 1, "default triangle is linear") end
+  for _, p in ipairs(def) do h.eq(p.shape, 1, "default triangle is linear"); h.eq(p.tension or 0, 0, "default triangle tension 0") end
   local function peakTime(attack)
     local pts = lfo.generate({ t0 = 0, t1 = 1 },
       { shape = "triangle", rate = { mode = "free", cycles = 1 }, amplitude = 1, baseline = 0, attack = attack })
@@ -672,6 +672,25 @@ h.test("triangle curve bends the segments (bezier)", function()
   local bez = false
   for _, p in ipairs(pts) do if p.shape == 5 and (p.tension or 0) > 0 then bez = true end end
   h.truthy(bez, "triangle curve -> bezier points with +tension")
+end)
+
+-- A stale non-zero Curve must NOT leak onto non-triangle anchored shapes (sine/parametric/sine2):
+-- their points always carry tension 0.
+h.test("curve does not leak tension onto non-triangle anchored shapes", function()
+  for _, shape in ipairs({ "sine", "parametric", "sine2" }) do
+    local pts = lfo.generate({ t0 = 0, t1 = 2 },
+      { shape = shape, rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, curve = 60 })
+    for _, p in ipairs(pts) do h.eq(p.tension or 0, 0, shape .. " must emit tension 0") end
+  end
+end)
+
+-- Triangle Curve is bipolar: negative curve -> bezier with negative tension.
+h.test("triangle negative curve -> bezier with -tension", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 1 },
+    { shape = "triangle", rate = { mode = "free", cycles = 1 }, amplitude = 1, baseline = 0, curve = -60 })
+  local neg = false
+  for _, p in ipairs(pts) do if p.shape == 5 and (p.tension or 0) < 0 then neg = true end end
+  h.truthy(neg, "triangle curve -60 -> bezier points with negative tension")
 end)
 
 h.run()
