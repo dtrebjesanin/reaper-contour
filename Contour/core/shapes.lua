@@ -19,8 +19,14 @@ function base.sine(t) return -cos(2 * pi * t) end
 -- the HIGH portion in the LAST pw of the cycle; the triangle starts at the TROUGH (-1) and peaks at
 -- mid-cycle, i.e. the -cos phase the anchored triangle uses.
 function base.square(t, pw) pw = pw or 0.5; return (t < 1 - pw) and -1 or 1 end
-function base.triangle(t)
-  if t < 0.5 then return -1 + 4 * t else return 3 - 4 * t end
+-- Triangle with a movable peak at `attack` (fraction in [0.01,0.99]; default 0.5 = symmetric, matching
+-- the anchored triangle). Rise -1->+1 over [0,a], fall +1->-1 over [a,1]. The generic sampler
+-- (Steps/Smooth path) passes attack so it follows the peak just like the sparse emitter.
+function base.triangle(t, attack)
+  local a = attack or 0.5
+  if a < 0.01 then a = 0.01 elseif a > 0.99 then a = 0.99 end
+  local x = frac(t)
+  if x < a then return -1 + 2 * (x / a) else return 1 - 2 * ((x - a) / (1 - a)) end
 end
 function base.sawup(t) return 2 * t - 1 end
 function base.sawdown(t) return 1 - 2 * t end
@@ -77,6 +83,7 @@ function M.value(shape, t, p)
   local v
   if shape == "square" then v = fn(tt, p.pulseWidth)
   elseif shape == "trapezoid" then v = fn(tt, p.edge)
+  elseif shape == "triangle" then v = fn(tt, (p.attack or 50) / 100)   -- movable peak (Attack)
   else v = fn(tt) end
   -- Smoothing blends toward a sine of the same phase, so other shapes can be rounded.
   v = applySmooth(v, base.sine(tt), p.smooth or 0)

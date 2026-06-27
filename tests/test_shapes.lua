@@ -26,6 +26,15 @@ h.test("triangle peaks", function()
   h.almost(shapes.value("triangle", 0.75, {}), 0)
 end)
 
+-- Attack moves the triangle peak in the generic path too (so Steps/Smooth follow it). attack=25 => peak
+-- (+1) at 0.25, rising before, falling after; default (no attack) stays symmetric.
+h.test("triangle attack moves the peak in shapes.value", function()
+  h.almost(shapes.value("triangle", 0.0,   { attack = 25 }), -1)
+  h.almost(shapes.value("triangle", 0.125, { attack = 25 }), 0)    -- halfway up the (shorter) rise
+  h.almost(shapes.value("triangle", 0.25,  { attack = 25 }), 1)    -- peak at attack
+  h.almost(shapes.value("triangle", 0.5,   {}), 1)                 -- default symmetric peak at mid
+end)
+
 -- saws span -1..1
 h.test("saws", function()
   h.almost(shapes.value("sawup", 0.0, {}), -1)

@@ -177,7 +177,9 @@ end
 --     0.5 + swing*0.25, piecewise-linear, with cycle boundaries fixed (matches CC22-24).
 local function emitAnchored(shape, t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   local phase = p.phase or 0
-  local swing = max(-1, min(1, p.swing or 0))
+  -- Triangle's asymmetry IS its Attack (peak position); Swing would just duplicate it (and compound),
+  -- so the triangle ignores Swing. Other anchored shapes (sine/parametric/sine²) still swing.
+  local swing = (shape == "triangle") and 0 or max(-1, min(1, p.swing or 0))
   local N = totalCycles
   -- Triangle gains Attack (movable peak) + Curve (bent segments). triA in [0.01,0.99]; triCurve
   -- bipolar. Other shapes ignore these.

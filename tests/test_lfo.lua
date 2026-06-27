@@ -650,4 +650,25 @@ h.test("triangle negative curve -> bezier with -tension", function()
   h.truthy(neg, "triangle curve -60 -> bezier points with negative tension")
 end)
 
+-- Triangle ignores Swing (its Attack is the peak control). Swing must not move triangle points.
+h.test("triangle ignores swing", function()
+  local function gen(sw)
+    return lfo.generate({ t0 = 0, t1 = 4 },
+      { shape = "triangle", rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0, swing = sw })
+  end
+  local a, b = gen(0), gen(0.6)
+  h.eq(#a, #b, "swing must not change triangle point count")
+  for i = 1, #a do h.almost(a[i].time, b[i].time, 1e-9, "swing must not move triangle points") end
+end)
+
+-- Steps routes triangle to the generic sampler, which now honors Attack: the peak stays near the
+-- attack fraction (not snapped back to the symmetric 0.5) -> no jump when engaging Steps.
+h.test("steps on triangle preserves the attack peak", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 4 }, { shape = "triangle",
+    rate = { mode = "free", cycles = 4 }, amplitude = 1, baseline = 0, attack = 20, quantizeSteps = 8 })
+  local bestT, bestV = nil, -2
+  for _, p in ipairs(pts) do if p.time < 1 and p.value > bestV then bestV, bestT = p.value, p.time end end
+  h.truthy(bestT ~= nil and bestT < 0.35, "stepped triangle peak should sit near attack 0.2, got " .. tostring(bestT))
+end)
+
 h.run()

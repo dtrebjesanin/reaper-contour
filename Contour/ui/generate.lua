@@ -19,7 +19,7 @@ local target = require("core.target")
 -- DEFAULT (v2.1 U1): a NO-OP — picking it generates and writes NOTHING (canGenerate=false),
 -- so the panel doesn't auto-write on first open until a real shape is chosen. Shapes are
 -- ordered by family: tonal (sine/triangle/saw/sawdown/square/trapezoid/parametric), harmonic
--- (rectsine/sine²), dynamic (pump/ad), stochastic (random/drift).
+-- (rectsine/sine²), stochastic (random/drift).
 local SHAPES = {
   { id = "none",       label = "None" },
   { id = "sine",       label = "Sine" },
@@ -691,7 +691,9 @@ function M.draw(ctx, state, detected)
     end
     changed, g.tilt = reaper.ImGui_SliderInt(ctx, "Tilt##gen_tilt", g.tilt, -100, 100, "%d")
     acc(changed); acc(tickReset(ctx, g, "tilt", -100, 100, 0))
-    if not special then
+    -- Swing for periodic shapes EXCEPT triangle, whose Attack already controls peak position (Swing
+    -- there would just duplicate it).
+    if not special and sid ~= "triangle" then
       changed, g.swing = reaper.ImGui_SliderDouble(ctx, "Swing##gen_swing", g.swing, -1.0, 1.0, "%.2f")
       acc(changed); acc(tickReset(ctx, g, "swing", -1.0, 1.0, 0.0))
     end
