@@ -362,6 +362,35 @@ local function generateRandom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSk
   return pts
 end
 
+-- Pump (sidechain duck): per cycle, an instant duck to -1 at the cycle start that RECOVERS to +1 by
+-- the cycle end (an exponential Saw Up). The recovery segment carries a bezier CC shape whose tension
+-- scales with `curve` (0..100 => linear..strongly bulged). Depth = amplitude. Sparse, like generateSaw.
+local function generatePump(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
+  local N = totalCycles
+  local curve = max(0, min(1, (p.curve or 0) / 100))
+  local tension = curve * 0.9
+  local rampShape = (curve > 1e-9) and 5 or 1   -- bezier when curved, else linear
+  local eps = 1e-4
+  local function emit(pts, rel, sv, shp, ten)
+    if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
+    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
+    local half = ampHalf(amp, ampSkew, rel)
+    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = shp, tension = ten }
+  end
+  local pts = {}
+  emit(pts, 0, -1, rampShape, tension)           -- first duck, curved recovery
+  local c = 1
+  while c / N < 1 - 1e-9 do
+    local rel = c / N
+    emit(pts, rel, 1, 1, 0)                       -- recovered peak (end of cycle c-1)
+    emit(pts, rel + eps, -1, rampShape, tension)  -- re-duck (start of cycle c)
+    c = c + 1
+  end
+  local fracEnd = N - floor(N)
+  emit(pts, 1, (fracEnd < 1e-9) and 1 or (2 * fracEnd - 1), 1, 0)   -- recovered value at span end
+  return pts
+end
+
 function M.generate(span, params)
   local t0, t1 = span.t0, span.t1
   local spanLen = t1 - t0
@@ -399,6 +428,9 @@ function M.generate(span, params)
   end
   if p.shape == "drift" then
     return generateRandom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset, true)
+  end
+  if p.shape == "pump" then
+    return generatePump(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, tiltOffset)
   end
 
   -- ---------------------------------------------------------------------------

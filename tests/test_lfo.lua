@@ -457,4 +457,22 @@ h.test("drift: smooth-interp random (slow shape)", function()
   for i = 1, 4 do h.almost(d[i].value, r[i].value, 1e-9) end
 end)
 
+-- Pump: per cycle a duck (-1) at the start that recovers to peak (+1); 2 cycles over the span =>
+-- two duck->recover ramps. Curve>0 => the duck point carries a bezier shape (5).
+h.test("pump: duck then recover per cycle", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 4 },
+    { shape = "pump", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, curve = 60 })
+  h.almost(pts[1].value, -1, 1e-9)          -- starts ducked
+  h.eq(pts[1].shape, 5, "curved recovery uses bezier")
+  -- somewhere a recovered peak (+1) exists before each re-duck
+  local sawPeak = false
+  for _, p in ipairs(pts) do if p.value > 0.99 then sawPeak = true end end
+  h.truthy(sawPeak, "recovers to full")
+end)
+h.test("pump curve=0 is linear recovery", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 4 },
+    { shape = "pump", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, curve = 0 })
+  h.eq(pts[1].shape, 1, "no curve => linear")
+end)
+
 h.run()
