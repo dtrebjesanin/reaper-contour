@@ -188,6 +188,11 @@ local DEFAULTS = {
   freqSkew   = 0,        -- -100..100 % (SliderInt)
   tilt       = 0,        -- -100..100 % (SliderInt)
   swing      = 0.0,
+  steps      = 0,        -- 0 = off; >=2 quantizes any shape to N levels
+  smooth     = 0,        -- 0..100 % blend toward sine
+  curve      = 0,        -- 0..100 (Pump/AD recovery/ease steepness)
+  attack     = 50,       -- 1..99 % of cycle (AD peak position)
+  edge       = 50,       -- 0..100 % (Trapezoid edge width; /200 => [0,0.5])
   scope      = SCOPE_TIMESEL,  -- Time selection (0) vs Entire item/envelope (1)
 }
 
@@ -220,6 +225,11 @@ local function ui(state)
       freqSkew  = DEFAULTS.freqSkew,  -- -100..100 % (global phase time-warp)
       tilt      = DEFAULTS.tilt,      -- -100..100 % (global full-range drift)
       swing     = DEFAULTS.swing,     -- -1..1
+      steps     = DEFAULTS.steps,
+      smooth    = DEFAULTS.smooth,
+      curve     = DEFAULTS.curve,
+      attack    = DEFAULTS.attack,
+      edge      = DEFAULTS.edge,
 
       -- Random seed (v2.1 U2): stable while dragging other sliders; only Re-roll
       -- changes it, so a random pattern doesn't jump around as you tweak amplitude.
@@ -309,7 +319,12 @@ local function buildParams(g, spanT0, vmin, vmax)
     swing      = g.swing,
     -- Random seed (v2.1 U2): forwarded so Re-roll yields a fresh pattern and the
     -- pattern stays stable while other sliders are dragged (seed only changes on Re-roll).
-    seed       = g.seed or 0,
+    seed          = g.seed or 0,
+    smooth        = (g.smooth or 0) / 100,                                  -- 0..1 blend toward sine
+    quantizeSteps = (g.steps and g.steps >= 2) and g.steps or nil,         -- nil = off
+    curve         = g.curve or 0,                                          -- Pump/AD ease (0..100)
+    attack        = g.attack or 50,                                        -- AD peak position (%)
+    edge          = (g.edge or 50) / 200,                                  -- Trapezoid edge -> [0,0.5]
   }
   return params, ccShape
 end
@@ -636,15 +651,37 @@ function M.draw(ctx, state, detected)
     -- in buildParams.
     changed, g.ampSkew = reaper.ImGui_SliderInt(ctx, "Amp skew##gen_ampskew", g.ampSkew, -100, 100, "%d")
     acc(changed); acc(tickReset(ctx, g, "ampSkew", -100, 100, 0))
-    -- Pulse width 0.01..0.99 (native is 1..99%): never a degenerate all-low/all-high square.
-    changed, g.pulseWidth = reaper.ImGui_SliderDouble(ctx, "Pulse width##gen_pw", g.pulseWidth, 0.01, 0.99, "%.2f")
-    acc(changed); acc(tickReset(ctx, g, "pulseWidth", 0.01, 0.99, 0.5))
+    -- Pulse width only for Square.
+    if currentShapeId(g) == "square" then
+      changed, g.pulseWidth = reaper.ImGui_SliderDouble(ctx, "Pulse width##gen_pw", g.pulseWidth, 0.01, 0.99, "%.2f")
+      acc(changed); acc(tickReset(ctx, g, "pulseWidth", 0.01, 0.99, 0.5))
+    end
+    -- Edge only for Trapezoid (0 = square, 100 = triangle).
+    if currentShapeId(g) == "trapezoid" then
+      changed, g.edge = reaper.ImGui_SliderInt(ctx, "Edge##gen_edge", g.edge, 0, 100, "%d")
+      acc(changed); acc(tickReset(ctx, g, "edge", 0, 100, 50))
+    end
+    -- Attack only for AD (peak position, % of cycle).
+    if currentShapeId(g) == "ad" then
+      changed, g.attack = reaper.ImGui_SliderInt(ctx, "Attack##gen_attack", g.attack, 1, 99, "%d")
+      acc(changed); acc(tickReset(ctx, g, "attack", 1, 99, 50))
+    end
+    -- Curve for Pump + AD (recovery / ease steepness).
+    if currentShapeId(g) == "pump" or currentShapeId(g) == "ad" then
+      changed, g.curve = reaper.ImGui_SliderInt(ctx, "Curve##gen_curve", g.curve, 0, 100, "%d")
+      acc(changed); acc(tickReset(ctx, g, "curve", 0, 100, 0))
+    end
     changed, g.freqSkew = reaper.ImGui_SliderInt(ctx, "Freq skew##gen_freqskew", g.freqSkew, -100, 100, "%d")
     acc(changed); acc(tickReset(ctx, g, "freqSkew", -100, 100, 0))
     changed, g.tilt = reaper.ImGui_SliderInt(ctx, "Tilt##gen_tilt", g.tilt, -100, 100, "%d")
     acc(changed); acc(tickReset(ctx, g, "tilt", -100, 100, 0))
     changed, g.swing = reaper.ImGui_SliderDouble(ctx, "Swing##gen_swing", g.swing, -1.0, 1.0, "%.2f")
     acc(changed); acc(tickReset(ctx, g, "swing", -1.0, 1.0, 0.0))
+    -- Global modifiers (apply to ANY shape). Steps quantizes to N levels; Smooth rounds toward sine.
+    changed, g.steps = reaper.ImGui_SliderInt(ctx, "Steps##gen_steps", g.steps, 0, 32, g.steps < 2 and "off" or "%d")
+    acc(changed); acc(tickReset(ctx, g, "steps", 0, 32, 0))
+    changed, g.smooth = reaper.ImGui_SliderInt(ctx, "Smooth##gen_smooth", g.smooth, 0, 100, "%d")
+    acc(changed); acc(tickReset(ctx, g, "smooth", 0, 100, 0))
   end
 
   reaper.ImGui_Separator(ctx)
