@@ -8,16 +8,19 @@ local shapes = require("core.shapes")
 local M = {}
 
 -- Offered as starting points (ids accepted by lfo.generate), in dropdown order. Periodic waveforms
--- only — None/Random/Drift/Custom aren't meaningful seeds; Parametric is the same wave as Sine.
+-- only — None/Random/Drift/Custom aren't meaningful seeds. Parametric shares Sine's waveform but has a
+-- DISTINCT point representation (quarter-sine eases vs Sine's 3-point shape-2), so it's kept as a seed.
+-- Order matches the Generate Shape dropdown.
 M.list = {
-  { id = "sine",      name = "Sine" },
-  { id = "triangle",  name = "Triangle" },
-  { id = "saw",       name = "Saw Up" },
-  { id = "sawdown",   name = "Saw Down" },
-  { id = "square",    name = "Square" },
-  { id = "trapezoid", name = "Trapezoid" },
-  { id = "rectsine",  name = "Rectified sine" },
-  { id = "sine2",     name = "Sine\xc2\xb2" },
+  { id = "sine",       name = "Sine" },
+  { id = "triangle",   name = "Triangle" },
+  { id = "saw",        name = "Saw Up" },
+  { id = "sawdown",    name = "Saw Down" },
+  { id = "square",     name = "Square" },
+  { id = "trapezoid",  name = "Trapezoid" },
+  { id = "parametric", name = "Parametric" },
+  { id = "rectsine",   name = "Rectified sine" },
+  { id = "sine2",      name = "Sine\xc2\xb2" },
 }
 
 local function clamp1(v) if v < -1 then return -1 elseif v > 1 then return 1 end return v end
