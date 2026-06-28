@@ -171,6 +171,15 @@ local function ampHalf(baseHalf, s_a, rel)
   return leftHalf + (rightHalf - leftHalf) * rel
 end
 
+-- modelValue: the shared value model used by every emitter/sampler. depth = fade envelope at rel,
+-- half = amp-skew ramp at rel; the waveform sample sv rides half*depth, and tilt is a fade-independent
+-- *rel drift. (Callers that quantize sv do so BEFORE calling this — pass the already-quantized sv.)
+local function modelValue(baseV, amp, ampSkew, tiltOffset, rel, sv, p)
+  local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
+  local half = ampHalf(amp, ampSkew, rel)
+  return baseV + half * sv * depth + tiltOffset * rel
+end
+
 -- ===========================================================================
 -- ANCHORED native shapes: SINE / TRIANGLE / PARAMETRIC.
 -- These three share the SAME extremum/anchor placement and differ only in (a) sample
@@ -216,9 +225,7 @@ local function emitAnchored(shape, t0, t1, spanLen, totalCycles, p, amp, baseV, 
   end
 
   local function valueAt(rel, sv)
-    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
-    local half = ampHalf(amp, ampSkew, rel)
-    return baseV + half * sv * depth + tiltOffset * rel
+    return modelValue(baseV, amp, ampSkew, tiltOffset, rel, sv, p)
   end
 
   -- Per-point CC interpolation shape (int). Triangle: linear, or bezier when Curve != 0.
@@ -283,9 +290,7 @@ local function generateSquare(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSk
 
   local function valueAt(rel, sv)
     sv = M.quantizeBipolar(sv, p.quantizeSteps)
-    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
-    local half = ampHalf(amp, ampSkew, rel)
-    return baseV + half * sv * depth + tiltOffset * rel
+    return modelValue(baseV, amp, ampSkew, tiltOffset, rel, sv, p)
   end
   -- Value the step holds at fractional shape-phase x: LOW in [0,hi), HIGH in [hi,1).
   local function heldValue(x) local f = x - floor(x); return (f < hi - 1e-9) and -1 or 1 end
@@ -344,9 +349,7 @@ local function generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew,
   local rampShape = (abs(curve) > 1e-9) and 5 or 1
   local function emit(pts, rel, sv, shp, ten)
     if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
-    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
-    local half = ampHalf(amp, ampSkew, rel)
-    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = shp, tension = ten }
+    pts[#pts + 1] = { time = t0 + rel * spanLen, value = modelValue(baseV, amp, ampSkew, tiltOffset, rel, sv, p), shape = shp, tension = ten }
   end
   -- Ramp value at cycle-position cp: PHASE shifts the waveform (shape-phase = cp - phase); each cycle
   -- ramps lo -> hi. Used for the partial values at the span edges.
@@ -388,9 +391,7 @@ local function generateTrapezoid(t0, t1, spanLen, totalCycles, p, amp, baseV, am
   local e = p.edge or 0.25
   if e > 0.5 then e = 0.5 elseif e < 0.001 then e = 0.001 end   -- avoid the degenerate edge=0 case
   local function emit(pts, rel, sv)
-    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
-    local half = ampHalf(amp, ampSkew, rel)
-    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = 1 }
+    pts[#pts + 1] = { time = t0 + rel * spanLen, value = modelValue(baseV, amp, ampSkew, tiltOffset, rel, sv, p), shape = 1 }
   end
   local corners = { { 0, -1 }, { e, 1 }, { 0.5, 1 }, { 0.5 + e, -1 } }   -- {phase, value} per cycle
   local samp = {}
@@ -423,9 +424,7 @@ local function generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, amp
   local phase = p.phase or 0   -- shape-phase = N*rel - phase  (same convention as emitAnchored)
   local swing = max(-1, min(1, p.swing or 0))
   local function emit(pts, rel, sv, shp)
-    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
-    local half = ampHalf(amp, ampSkew, rel)
-    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = shp }
+    pts[#pts + 1] = { time = t0 + rel * spanLen, value = modelValue(baseV, amp, ampSkew, tiltOffset, rel, sv, p), shape = shp }
   end
   local anchors = { { 0, -1, 3 }, { 0.25, 1, 4 }, { 0.5, -1, 3 }, { 0.75, 1, 4 } }  -- {phase, value, ccShape}
   -- Ease for an arbitrary phase: a rising quarter ([0,.25) & [.5,.75)) leaves a cusp -> fast start (3);
@@ -460,9 +459,7 @@ local function generateCustom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSk
   local cp = p.customPoints or {}
   local function emit(pts, rel, y, shp, ten)
     if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
-    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
-    local half = ampHalf(amp, ampSkew, rel)
-    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * y * depth + tiltOffset * rel, shape = shp, tension = ten }
+    pts[#pts + 1] = { time = t0 + rel * spanLen, value = modelValue(baseV, amp, ampSkew, tiltOffset, rel, y, p), shape = shp, tension = ten }
   end
   if #cp < 2 then
     local y = (cp[1] and cp[1].y) or 0
@@ -524,10 +521,8 @@ local function generateRandom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSk
   local ccShape = smoothInterp and 2 or 0
   local function emit(pts, rel, cyc)
     if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
-    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
-    local half = ampHalf(amp, ampSkew, rel)
     local sv = shapes.randomAt(seed, cyc)
-    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * sv * depth + tiltOffset * rel, shape = ccShape }
+    pts[#pts + 1] = { time = t0 + rel * spanLen, value = modelValue(baseV, amp, ampSkew, tiltOffset, rel, sv, p), shape = ccShape }
   end
   local pts = {}
   local c = 0
@@ -667,10 +662,8 @@ function M.generate(span, params)
       sv = shapes.value(p.shape, tInCycle, p)
     end
     sv = M.quantizeBipolar(sv, p.quantizeSteps)
-    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
-    local half = ampHalf(amp, ampSkew, rel)
     -- Tilt is a GLOBAL drift NOT scaled by fade depth (only the waveform sv*depth fades).
-    return baseV + half * sv * depth + tiltOffset * rel
+    return modelValue(baseV, amp, ampSkew, tiltOffset, rel, sv, p)
   end
 
   local pts = {}
