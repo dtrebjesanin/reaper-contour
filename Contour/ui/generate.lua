@@ -457,7 +457,9 @@ local function customOverlayPoints(g)
   for _, p in ipairs(pts) do
     local y = p.value
     if y < -1 then y = -1 elseif y > 1 then y = 1 end   -- clamp to the pad (Smooth/overshoot can nudge past)
-    out[#out + 1] = { x = p.time, y = y }
+    -- carry the per-segment shape/tension so the pad tessellates curves (a sparse eased/bezier shape
+    -- must not render as straight segments — that's what made a loaded sine look like a triangle).
+    out[#out + 1] = { x = p.time, y = y, shape = p.shape, tension = p.tension }
   end
   return out
 end

@@ -285,6 +285,20 @@ h.test("custom overlay: REFLECTS the per-cycle modifiers (swing / steps / smooth
   h.truthy(shapeStr(ov(function(g) g.swing = 0.6 end)) ~= plain, "Swing should reshape the overlay")
 end)
 
+h.test("custom overlay: PRESERVES per-segment shapes (regression: a loaded sine showed as a triangle)", function()
+  local starters    = require("core.starters")
+  local customshape = require("core.customshape")
+  local g = baseG(); g.shapeIdx = 12
+  g.custom = { idx = 1, store = { { name = "sine", points = customshape.clampPoints(starters.points("sine")) } } }
+  local o = generate._customOverlayPoints(g)
+  h.truthy(o and #o >= 3, "sine overlay should carry the sparse control points")
+  -- the sine starter's segments are eased (shape 2), NOT linear; if the overlay drops that, the pad
+  -- straight-lines 3 points into a triangle. The overlay must carry a non-linear shape.
+  local anyCurved = false
+  for _, p in ipairs(o) do if (p.shape or 1) ~= 1 then anyCurved = true; break end end
+  h.truthy(anyCurved, "overlay must preserve non-linear segment shapes (else sine renders as a triangle)")
+end)
+
 h.test("custom overlay: IGNORES span-wide modifiers (tilt / skew / amplitude / baseline)", function()
   local plain = shapeStr(ov(function() end))
   h.eq(shapeStr(ov(function(g) g.tilt = 100 end)),     plain, "Tilt L must not affect the per-cycle overlay")

@@ -54,6 +54,39 @@ local function segUnder(points, mx, my, x0, y0, w, hgt)
   return nil
 end
 
+-- Draw a points polyline honoring each segment's shape (1=line, 0=step, 5=bezier, 2/3/4=ease),
+-- tessellating curves so they read smoothly. Shared by the editable curve AND the ghost overlay so
+-- both render identically (a sparse eased shape must not collapse to straight segments).
+local function drawCurve(dl, pts, x0, y0, w, hgt, col, thickness)
+  thickness = thickness or 2
+  for i = 1, #pts - 1 do
+    local a, b = pts[i], pts[i + 1]
+    local ax, ay = toScreen(a.x, a.y, x0, y0, w, hgt)
+    local bx, by = toScreen(b.x, b.y, x0, y0, w, hgt)
+    local sh = a.shape or 1
+    if sh == 1 then
+      reaper.ImGui_DrawList_AddLine(dl, ax, ay, bx, by, col, thickness)
+    elseif sh == 0 then                                          -- step: hold at a.y, then jump at b.x
+      reaper.ImGui_DrawList_AddLine(dl, ax, ay, bx, ay, col, thickness)
+      reaper.ImGui_DrawList_AddLine(dl, bx, ay, bx, by, col, thickness)
+    else
+      local px, py = ax, ay
+      for s = 1, 32 do
+        local qx, qy
+        if sh == 5 then                                          -- REAPER's exact bezier (parametric)
+          local xf, yf = cs.bezierXY(s / 32, a.tension or 0)
+          qx, qy = toScreen(a.x + (b.x - a.x) * xf, a.y + (b.y - a.y) * yf, x0, y0, w, hgt)
+        else                                                     -- 2/3/4 = slow/fast sine eases
+          local t = s / 32
+          qx, qy = toScreen(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * ease(sh, t, a.tension or 0), x0, y0, w, hgt)
+        end
+        reaper.ImGui_DrawList_AddLine(dl, px, py, qx, qy, col, thickness)
+        px, py = qx, qy
+      end
+    end
+  end
+end
+
 function M.draw(ctx, points, opts)
   opts = opts or {}
   if not (reaper.ImGui_GetWindowDrawList and reaper.ImGui_DrawList_AddLine and reaper.ImGui_InvisibleButton
@@ -78,18 +111,6 @@ function M.draw(ctx, points, opts)
   for i = 0, gridX do local gx = x0 + i / gridX * w; reaper.ImGui_DrawList_AddLine(dl, gx, y0, gx, y0 + hgt, GRID, 1) end
   for j = 0, gridY do local gy = y0 + j / gridY * hgt; reaper.ImGui_DrawList_AddLine(dl, x0, gy, x0 + w, gy, GRID, 1) end
   reaper.ImGui_DrawList_AddLine(dl, x0, y0 + hgt / 2, x0 + w, y0 + hgt / 2, AXIS, 1)   -- center (y=0)
-
-  -- ghost overlay: a dim trace of what this drawn cycle BECOMES after the per-cycle modifiers, supplied
-  -- by the caller as a normalized {x,y} polyline. Drawn here (behind the editable curve + handles) so it
-  -- never interferes with editing; the pad stays "dumb" and doesn't compute it.
-  if opts.overlay and #opts.overlay >= 2 then
-    local gpx, gpy
-    for _, p in ipairs(opts.overlay) do
-      local gsx, gsy = toScreen(p.x, p.y, x0, y0, w, hgt)
-      if gpx then reaper.ImGui_DrawList_AddLine(dl, gpx, gpy, gsx, gsy, GHOST, 2) end
-      gpx, gpy = gsx, gsy
-    end
-  end
 
   -- pointer hit-test (nearest point)
   local HR = 9
@@ -162,34 +183,11 @@ function M.draw(ctx, points, opts)
   end
   if not reaper.ImGui_IsMouseDown(ctx, 0) then drag.idx, drag.seg = nil, nil end
 
-  -- draw the curve. Shape 1 = straight; shape 5 (bezier) is tessellated by the bezier PARAMETER u
-  -- (cs.bezierXY) so the steep extremes stay smooth instead of notching; 2/3/4 are y=ease(x).
-  for i = 1, #points - 1 do
-    local a, b = points[i], points[i + 1]
-    local ax, ay = toScreen(a.x, a.y, x0, y0, w, hgt)
-    local bx, by = toScreen(b.x, b.y, x0, y0, w, hgt)
-    local sh = a.shape or 1
-    if sh == 1 then
-      reaper.ImGui_DrawList_AddLine(dl, ax, ay, bx, by, CURVE, 2)
-    elseif sh == 0 then                                          -- step: hold at a.y, then jump at b.x
-      reaper.ImGui_DrawList_AddLine(dl, ax, ay, bx, ay, CURVE, 2)
-      reaper.ImGui_DrawList_AddLine(dl, bx, ay, bx, by, CURVE, 2)
-    else
-      local px, py = ax, ay
-      for s = 1, 32 do
-        local qx, qy
-        if sh == 5 then
-          local xf, yf = cs.bezierXY(s / 32, a.tension or 0)
-          qx, qy = toScreen(a.x + (b.x - a.x) * xf, a.y + (b.y - a.y) * yf, x0, y0, w, hgt)
-        else
-          local t = s / 32
-          qx, qy = toScreen(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * ease(sh, t, a.tension or 0), x0, y0, w, hgt)
-        end
-        reaper.ImGui_DrawList_AddLine(dl, px, py, qx, qy, CURVE, 2)
-        px, py = qx, qy
-      end
-    end
-  end
+  -- Ghost overlay FIRST (behind), then the editable curve on top — both via the same shape-aware
+  -- renderer so an eased/bezier ghost tessellates a real curve instead of straight-lining (a sparse
+  -- sine has shape-2 segments; connecting its 3 points straight would look like a triangle).
+  if opts.overlay and #opts.overlay >= 2 then drawCurve(dl, opts.overlay, x0, y0, w, hgt, GHOST, 2) end
+  drawCurve(dl, points, x0, y0, w, hgt, CURVE, 2)
   -- draw point handles
   for i, p in ipairs(points) do
     local sx, sy = toScreen(p.x, p.y, x0, y0, w, hgt)
