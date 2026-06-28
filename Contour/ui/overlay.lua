@@ -14,6 +14,11 @@ local ACCENT   = 0x2E8B9BFF
 local ACCENT_H = 0x53C9D6FF
 local BOXCOL   = 0x2E8B9BCC
 
+-- Forward declaration: bounds() is defined lower in the file but called from the draw/drag handlers
+-- ABOVE its definition. As a module-local it must be declared here first, else those earlier call
+-- sites resolve to a nil global (regression from demoting M._bounds to a local).
+local bounds
+
 -- Per-operation colour code for the handles (base, brightened-when-grabbed). The arrow shape shows the drag
 -- axis; the colour shows the operation (and tells Tilt from Scale, which share a vertical arrow).
 local OPCOL = {
@@ -607,7 +612,7 @@ function M.frame(ctx)
   return true
 end
 
-local function bounds(pts)
+function bounds(pts)   -- assigns to the forward-declared local `bounds` (see top of file)
   local b = { tmin=1e18, tmax=-1e18, vmin=1e18, vmax=-1e18 }
   for _, p in ipairs(pts) do
     if p.t<b.tmin then b.tmin=p.t end; if p.t>b.tmax then b.tmax=p.t end
