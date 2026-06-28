@@ -29,6 +29,38 @@ function M.clampPoints(points)
   return out
 end
 
+-- REAPER's shape-5 "bezier" curve, reproduced EXACTLY from schwa's (Cockos dev) tension->control-point
+-- model (forum.cockos.com/showthread.php?t=177451): normalized endpoints P0=(0,1) P3=(1,-1); the two
+-- interior control points are a piecewise-linear function of tension T in [-1,1], anchored at
+--   T=-1 -> (0,-1)(0,-1);  T=0 -> (0.25,0.5)(0.75,-0.5);  T=+1 -> (1,1)(1,1).
+-- It is PARAMETRIC (control-point x is non-uniform), so the value at horizontal fraction t is found by
+-- solving X(u)=t then taking Y(u). Returns the value FRACTION in [0,1] (0 = segment start value, 1 =
+-- end value). This makes the draw pad's preview match REAPER's rendered envelope/CC bezier.
+local function bezCP(T)
+  if T < -1 then T = -1 elseif T > 1 then T = 1 end
+  if T <= 0 then
+    local f = T + 1                                        -- blend tension -1 -> 0
+    return 0.25 * f, -1 + 1.5 * f, 0.75 * f, -1 + 0.5 * f
+  end
+  local f = T                                              -- blend tension 0 -> +1
+  return 0.25 + 0.75 * f, 0.5 + 0.5 * f, 0.75 + 0.25 * f, -0.5 + 1.5 * f
+end
+local function cubic(c0, c1, c2, c3, u)                    -- 1-D cubic Bernstein
+  local m = 1 - u
+  return m * m * m * c0 + 3 * m * m * u * c1 + 3 * m * u * u * c2 + u * u * u * c3
+end
+function M.bezierFrac(t, tension)
+  if t <= 0 then return 0 elseif t >= 1 then return 1 end
+  local p1x, p1y, p2x, p2y = bezCP(tension or 0)
+  local lo, hi = 0.0, 1.0                                  -- solve X(u)=t (X is monotonic in u)
+  for _ = 1, 20 do
+    local mid = (lo + hi) * 0.5
+    if cubic(0, p1x, p2x, 1, mid) < t then lo = mid else hi = mid end
+  end
+  local u = (lo + hi) * 0.5
+  return (1 - cubic(1, p1y, p2y, -1, u)) * 0.5            -- normalized y [+1..-1] -> fraction [0..1]
+end
+
 local ESC = { ["%"] = "%25", ["|"] = "%7C", ["~"] = "%7E", [";"] = "%3B", [","] = "%2C" }
 local function esc(s) return (tostring(s):gsub("[%%|~;,]", ESC)) end
 local function unesc(s) return (tostring(s):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)) end

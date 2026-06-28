@@ -1,7 +1,8 @@
 -- ui/drawpad.lua — in-panel custom-shape draw pad (ReaImGui DrawList). Edits a points list in place:
 --   click empty -> add point; drag point -> move; right-click / double-click point -> delete
---   (endpoints x are pinned to 0/1, y movable); drag a segment's middle -> bend it (bezier tension).
--- Pure-ish: no ExtState; the caller owns persistence. Guarded so it no-ops if DrawList APIs are absent.
+--   (endpoints x are pinned to 0/1, y movable); Alt+drag a segment (EW cursor) -> bend it.
+-- The bend PREVIEW uses REAPER's exact shape-5 bezier (customshape.bezierFrac, from schwa's tension
+-- model) so the pad matches the rendered envelope/CC. Pure-ish: no ExtState; caller owns persistence.
 local M = {}
 local cs = require("core.customshape")
 local abs, min, max = math.abs, math.min, math.max
@@ -23,9 +24,10 @@ local function toData(sx, sy, x0, y0, w, hgt)
   return max(0, min(1, x)), max(-1, min(1, y))
 end
 
--- bezier value-fraction model (matches the engine's freq-skew quadratic; calibrate vs REAPER bezier)
+-- value-fraction per CC segment shape (caller does value = a.y + (b.y-a.y)*ease). Shape 5 = REAPER's
+-- exact bezier (customshape.bezierFrac); 2/3/4 are the slow/fast sine eases (Phase-3 stamp palette).
 local function ease(shape, t, ten)
-  if shape == 5 then return t + ten * t * (1 - t) end
+  if shape == 5 then return cs.bezierFrac(t, ten) end
   if shape == 2 then return (1 - math.cos(math.pi * t)) / 2 end
   if shape == 3 then return math.sin(math.pi * t / 2) end
   if shape == 4 then return 1 - math.cos(math.pi * t / 2) end
@@ -127,10 +129,13 @@ function M.draw(ctx, points, opts)
     elseif drag.seg then
       local a, b = points[drag.seg], points[drag.seg + 1]
       if a and b then
-        local ax, ay = toScreen(a.x, a.y, x0, y0, w, hgt)
-        local bx, by = toScreen(b.x, b.y, x0, y0, w, hgt)
-        local midY = (ay + by) / 2
-        local ten = max(-1, min(1, (midY - my) / (hgt / 2)))   -- drag up -> +tension
+        local _, ay = toScreen(a.x, a.y, x0, y0, w, hgt)
+        local _, by = toScreen(b.x, b.y, x0, y0, w, hgt)
+        local off = max(-1, min(1, ((ay + by) / 2 - my) / (hgt / 2)))   -- mouse above the chord -> off>0
+        -- Make the curve TRACK the mouse (above the chord -> bulges up) for both rising and falling
+        -- segments. In REAPER's bezier the value-fraction exceeds 0.5 for NEGATIVE tension, so the
+        -- sign that lifts the curve on screen depends on the segment's direction.
+        local ten = -off * ((b.y >= a.y) and 1 or -1)
         a.shape = (abs(ten) > 1e-3) and 5 or 1; a.tension = ten; changed = true
       end
     end

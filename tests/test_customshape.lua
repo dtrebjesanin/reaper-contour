@@ -42,6 +42,33 @@ h.test("clampPoints sorts, clamps, and pins endpoints", function()
   for i = 2, #out do h.truthy(out[i].x >= out[i-1].x, "x ascending") end
 end)
 
+-- bezierFrac reproduces REAPER's shape-5 bezier (schwa's tension->control-point model). Locking these
+-- anchors guards the draw-pad preview against drifting away from REAPER's rendered curve.
+h.test("bezierFrac matches REAPER's bezier (endpoints, neutral, sign, schwa anchors)", function()
+  for _, T in ipairs({ -1, -0.5, 0, 0.4, 1 }) do                       -- endpoints exact for any tension
+    h.almost(cs.bezierFrac(0, T), 0, 1e-9); h.almost(cs.bezierFrac(1, T), 1, 1e-9)
+  end
+  for _, t in ipairs({ 0.1, 0.25, 0.5, 0.75, 0.9 }) do                 -- no tension -> linear (T=0 is the chord)
+    h.almost(cs.bezierFrac(t, 0), t, 1e-6)
+  end
+  h.almost(cs.bezierFrac(0.5, -0.6), 0.8748, 5e-3, "T=-0.6 midpoint (schwa-verified)")
+  h.almost(cs.bezierFrac(0.5,  0.6), 0.1252, 5e-3, "T=+0.6 midpoint (schwa-verified)")
+  h.truthy(cs.bezierFrac(0.5, -0.5) > 0.5, "negative tension reaches the end value early")
+  h.truthy(cs.bezierFrac(0.5,  0.5) < 0.5, "positive tension clings to the start value")
+  h.almost(cs.bezierFrac(0.5, -0.5) + cs.bezierFrac(0.5, 0.5), 1, 1e-6, "symmetric about T at the midpoint")
+end)
+
+h.test("bezierFrac is monotonic increasing in t", function()
+  for _, T in ipairs({ -0.8, -0.3, 0.3, 0.8 }) do
+    local prev = -1
+    for i = 0, 20 do
+      local f = cs.bezierFrac(i / 20, T)
+      h.truthy(f >= prev - 1e-9, "monotone for T=" .. T)
+      prev = f
+    end
+  end
+end)
+
 -- generateCustom repeats the preset at the Rate, scales by amplitude/baseline, carries shapes/tensions.
 local lfo = require("core.lfo")
 local function customPts(extra)
