@@ -434,6 +434,34 @@ local function currentShapeId(g)
   return SHAPES[g.shapeIdx + 1] and SHAPES[g.shapeIdx + 1].id or "none"
 end
 
+-- The custom draw-pad GHOST: ONE normalized cycle of the drawn shape AS RESHAPED by the per-cycle
+-- modifiers (Swing / Steps / Smooth / Phase), so the pad shows what the drawn curve actually becomes.
+-- Span-wide level/ramp modifiers (Tilt L/R, amp-skew, freq-skew, amplitude, baseline) are zeroed:
+-- a single cycle sees only a slice of them, so drawing them here would misrepresent the multi-cycle
+-- output (they read correctly in the live lane preview). Reuses buildParams + lfo.generate (no
+-- re-implementation), so the ghost is exactly the engine. Returns a { {x,y}, ... } polyline in pad
+-- space (x in [0,1], y in [-1,1]), or nil when the shape isn't custom / nothing generates.
+local function customOverlayPoints(g)
+  if currentShapeId(g) ~= "custom" then return nil end
+  local params = buildParams(g, 0, -1, 1)               -- value units over a symmetric [-1,1] range
+  params.rate        = { mode = "free", cycles = 1 }    -- one cycle fills the pad's x-axis
+  params.amplitude   = 1                                -- full normalized height (level is shown in the lane)
+  params.baseline    = 0
+  params.tiltOffset  = 0                                -- span-wide -> excluded from the per-cycle view
+  params.tiltOffsetR = 0
+  params.ampSkew     = 0
+  params.freqSkew    = 0
+  local okGen, pts = pcall(lfo.generate, { t0 = 0, t1 = 1 }, params)
+  if not okGen or not pts or #pts == 0 then return nil end
+  local out = {}
+  for _, p in ipairs(pts) do
+    local y = p.value
+    if y < -1 then y = -1 elseif y > 1 then y = 1 end   -- clamp to the pad (Smooth/overshoot can nudge past)
+    out[#out + 1] = { x = p.time, y = y }
+  end
+  return out
+end
+
 -- Whether a live write can run right now (CC target + a time selection + valid CC#
 -- + a REAL shape selected). When shape == "none" (the default, v2.1 U1) we generate
 -- and write NOTHING — this is the explicit no-op gate that stops auto-generation on
@@ -704,10 +732,12 @@ function M.draw(ctx, state, detected)
       local csn, sn = reaper.ImGui_Checkbox(ctx, "Snap##cust_snap", c.snap and true or false)
       if csn then c.snap = sn; saveCustom(c) end
     end
-    -- the pad (height is user-stretchable via the grabber below; persisted)
+    -- the pad (height is user-stretchable via the grabber below; persisted). The ghost overlay shows
+    -- what the drawn cycle becomes after the per-cycle modifiers (Swing/Steps/Smooth/Phase).
     local padW = reaper.ImGui_GetContentRegionAvail and select(1, reaper.ImGui_GetContentRegionAvail(ctx)) or 360
     local padChanged = drawpad.draw(ctx, c.store[c.idx].points,
-      { width = padW, height = c.padH or 200, id = "##cust_pad", gridX = c.gridX, gridY = c.gridY, snap = c.snap })
+      { width = padW, height = c.padH or 200, id = "##cust_pad", gridX = c.gridX, gridY = c.gridY, snap = c.snap,
+        overlay = customOverlayPoints(g) })
     -- resize grabber: a thin strip under the pad; drag it to change the pad height
     reaper.ImGui_InvisibleButton(ctx, "##cust_pad_resize", padW, 7)
     if reaper.ImGui_IsItemHovered(ctx) or reaper.ImGui_IsItemActive(ctx) then
@@ -1066,5 +1096,6 @@ M._captureParams   = captureParams      -- (g) -> { DEFAULTS key -> value }
 M._applyParams     = applyParams        -- (g, params)
 M._genPresetPoints = genPresetPoints    -- (g) -> encoded custom-drawing string | nil
 M._recallGenPreset = recallGenPreset    -- (g, preset) — applies params + materializes embedded drawing
+M._customOverlayPoints = customOverlayPoints  -- (g) -> { {x,y}, ... } pad-space ghost | nil
 
 return M

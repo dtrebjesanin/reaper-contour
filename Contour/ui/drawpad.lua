@@ -10,6 +10,7 @@ local abs, min, max, floor = math.abs, math.min, math.max, math.floor
 local GRID = 0x3A434BFF
 local AXIS = 0x55636EFF
 local CURVE = 0x48C6D4FF
+local GHOST = 0xE3B15399   -- dim amber: the "result after modifiers" ghost, drawn behind the teal curve
 local PT = 0x9FE9F1FF
 local PTHOT = 0xFFFFFFFF
 local BG = 0x10151AFF
@@ -77,6 +78,18 @@ function M.draw(ctx, points, opts)
   for i = 0, gridX do local gx = x0 + i / gridX * w; reaper.ImGui_DrawList_AddLine(dl, gx, y0, gx, y0 + hgt, GRID, 1) end
   for j = 0, gridY do local gy = y0 + j / gridY * hgt; reaper.ImGui_DrawList_AddLine(dl, x0, gy, x0 + w, gy, GRID, 1) end
   reaper.ImGui_DrawList_AddLine(dl, x0, y0 + hgt / 2, x0 + w, y0 + hgt / 2, AXIS, 1)   -- center (y=0)
+
+  -- ghost overlay: a dim trace of what this drawn cycle BECOMES after the per-cycle modifiers, supplied
+  -- by the caller as a normalized {x,y} polyline. Drawn here (behind the editable curve + handles) so it
+  -- never interferes with editing; the pad stays "dumb" and doesn't compute it.
+  if opts.overlay and #opts.overlay >= 2 then
+    local gpx, gpy
+    for _, p in ipairs(opts.overlay) do
+      local gsx, gsy = toScreen(p.x, p.y, x0, y0, w, hgt)
+      if gpx then reaper.ImGui_DrawList_AddLine(dl, gpx, gpy, gsx, gsy, GHOST, 2) end
+      gpx, gpy = gsx, gsy
+    end
+  end
 
   -- pointer hit-test (nearest point)
   local HR = 9

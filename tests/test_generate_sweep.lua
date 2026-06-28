@@ -263,4 +263,36 @@ h.test("Generate preset: a non-Custom preset embeds no drawing", function()
   h.truthy(generate._genPresetPoints(g) == nil, "non-Custom shapes must not embed points")
 end)
 
+-- ---- Custom draw-pad ghost overlay (one normalized cycle, per-cycle modifiers only) --------------
+local function ov(mut) local g = baseG(); g.shapeIdx = 12; mut(g); return generate._customOverlayPoints(g) end
+local function shapeStr(o) local s = {}; for _, p in ipairs(o) do s[#s + 1] = ("%.5f,%.5f"):format(p.x, p.y) end; return table.concat(s, ";") end
+
+h.test("custom overlay: normalized one-cycle curve for custom, nil for other shapes", function()
+  local o = ov(function() end)
+  h.truthy(o and #o >= 2, "custom should produce an overlay polyline")
+  for _, p in ipairs(o) do
+    h.truthy(p.x >= -1e-9 and p.x <= 1 + 1e-9, "x out of [0,1]: " .. p.x)
+    h.truthy(p.y >= -1 - 1e-9 and p.y <= 1 + 1e-9, "y out of [-1,1]: " .. p.y)
+  end
+  local g = baseG(); g.shapeIdx = 1
+  h.truthy(generate._customOverlayPoints(g) == nil, "non-custom shape must return nil")
+end)
+
+h.test("custom overlay: REFLECTS the per-cycle modifiers (swing / steps / smooth)", function()
+  local plain = shapeStr(ov(function() end))
+  h.truthy(shapeStr(ov(function(g) g.steps = 4 end)) ~= plain, "Steps should reshape the overlay")
+  h.truthy(shapeStr(ov(function(g) g.smooth = 80 end)) ~= plain, "Smooth should reshape the overlay")
+  h.truthy(shapeStr(ov(function(g) g.swing = 0.6 end)) ~= plain, "Swing should reshape the overlay")
+end)
+
+h.test("custom overlay: IGNORES span-wide modifiers (tilt / skew / amplitude / baseline)", function()
+  local plain = shapeStr(ov(function() end))
+  h.eq(shapeStr(ov(function(g) g.tilt = 100 end)),     plain, "Tilt L must not affect the per-cycle overlay")
+  h.eq(shapeStr(ov(function(g) g.tiltR = -100 end)),   plain, "Tilt R must not affect the per-cycle overlay")
+  h.eq(shapeStr(ov(function(g) g.ampSkew = 90 end)),   plain, "amp-skew must not affect the per-cycle overlay")
+  h.eq(shapeStr(ov(function(g) g.freqSkew = 90 end)),  plain, "freq-skew must not affect the per-cycle overlay")
+  h.eq(shapeStr(ov(function(g) g.amplitude = 300 end)),plain, "amplitude (level) must not affect the per-cycle overlay")
+  h.eq(shapeStr(ov(function(g) g.baseline = 80 end)),  plain, "baseline (level) must not affect the per-cycle overlay")
+end)
+
 h.run()

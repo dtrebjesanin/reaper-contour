@@ -134,6 +134,9 @@ h.test("drawpad.draw runs across point/segment/grid configurations", function()
     { pts = { { x = 0, y = -1, shape = 5, tension = -0.5 }, { x = 1, y = 1, shape = 5, tension = 0.5 } }, opts = { gridX = 8, gridY = 4 } },
     { pts = { { x = 0, y = 0, shape = 0 }, { x = 0.5, y = 1, shape = 2 }, { x = 1, y = -1, shape = 3 } }, opts = { gridX = 1, gridY = 1 } },
     { pts = { { x = 0, y = 0, shape = 4, tension = 0.3 }, { x = 1, y = 0.5, shape = 1 } }, opts = { width = 500, height = 200, snap = true } },
+    -- with a ghost overlay (the "result after modifiers" preview) supplied by the caller
+    { pts = { { x = 0, y = -1, shape = 1 }, { x = 0.5, y = 1, shape = 1 }, { x = 1, y = -1, shape = 1 } },
+      opts = { overlay = { { x = 0, y = -0.8 }, { x = 0.3, y = 0.6 }, { x = 0.6, y = 0.6 }, { x = 1, y = -0.8 } } } },
   }
   for i, c in ipairs(configs) do
     stub.reset()
