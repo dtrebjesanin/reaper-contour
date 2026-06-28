@@ -151,12 +151,16 @@ h.test("custom + Smooth=1 morphs toward the sine (not the drawn triangle)", func
   h.truthy(near.value < -0.6, "smoothed value is sine-like (" .. string.format("%.3f", near.value) .. "), not triangle -0.5")
 end)
 
-h.test("custom + Swing routes to the generic sampler and covers the span", function()
+h.test("custom + Swing stays SPARSE (same point count, positions warped)", function()
   local base = customSSS()
   local sw = customSSS({ swing = 0.5 })
-  h.truthy(#sw > #base, "swing forces the dense generic path")
-  h.almost(sw[1].time, 0, 1e-9); h.almost(sw[#sw].time, 2, 1e-9)
+  h.eq(#sw, #base, "swing keeps the sparse point count (no dense resampling)")
+  h.almost(sw[1].time, 0, 1e-9); h.almost(sw[#sw].time, 2, 1e-9)   -- span covered
   for i = 2, #sw do h.truthy(sw[i].time > sw[i - 1].time, "strictly increasing") end
+  -- swing actually MOVED an interior point (the peak at intra-cycle 0.5 shifts)
+  local moved = false
+  for i = 1, #base do if math.abs(sw[i].time - base[i].time) > 1e-6 then moved = true break end end
+  h.truthy(moved, "swing repositions interior points")
 end)
 
 h.test("custom discontinuous shape ends on the cycle-END value", function()

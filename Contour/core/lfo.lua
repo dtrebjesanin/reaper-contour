@@ -462,10 +462,13 @@ end
 -- Custom: a user-drawn one-cycle shape (points {x in [0,1], y in [-1,1], shape, tension}) repeated at
 -- the Rate. SPARSE emitter like generateSaw: interior points per cycle + a saw-style boundary (cycle-
 -- END value then next cycle-START value one eps later) so a discontinuous boundary renders as a jump
--- and a seamless one is a harmless flat eps-segment. PHASE/FREQ-SKEW/AMP-SKEW/TILT/FADE apply.
+-- and a seamless one is a harmless flat eps-segment. PHASE/FREQ-SKEW/AMP-SKEW/TILT/FADE/SWING apply.
+-- SWING warps each interior point's intra-cycle position via swingWarp (sparse, same as the other
+-- emitters) so the point COUNT is unchanged; only Steps/Smooth route Custom to the dense generic path.
 local function generateCustom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   local N = totalCycles
   local phase = p.phase or 0
+  local swing = max(-1, min(1, p.swing or 0))
   local cp = p.customPoints or {}
   local function emit(pts, rel, y, shp, ten)
     if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
@@ -494,7 +497,7 @@ local function generateCustom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSk
     for i = 1, #cp do
       local x = cp[i].x
       if x > 1e-9 and x < 1 - 1e-9 then
-        local prog = (c + x + phase) / N
+        local prog = (c + M.swingWarp(x, swing) + phase) / N   -- SWING warps the intra-cycle position
         if prog > 1e-9 and prog < 1 - 1e-9 then
           samp[#samp + 1] = { rel = M.freqWarpInverse(prog, freqSkew), y = cp[i].y, shp = cp[i].shape or 1, ten = cp[i].tension or 0 }
         end
@@ -631,10 +634,11 @@ function M.generate(span, params)
     return generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   end
 
-  -- CUSTOM: user-drawn one-cycle shape repeated at the Rate. Sparse + exact-bezier when no SSS; when
-  -- Swing/Steps/Smooth is active it routes to the generic sampler below (same SSS path as every other
-  -- shape), which reads the curve via customshape.valueAt.
-  if p.shape == "custom" and (p.smooth or 0) == 0 and not p.quantizeSteps and (p.swing or 0) == 0 then
+  -- CUSTOM: user-drawn one-cycle shape repeated at the Rate. The SPARSE emitter handles Phase / Freq
+  -- skew / Amp skew / Tilt / Fade AND Swing (warps point positions, point count unchanged). Only
+  -- Steps/Smooth need the dense generic sampler below (they reshape per-sample geometry; it reads the
+  -- curve via customshape.valueAt and applies swing there too).
+  if p.shape == "custom" and (p.smooth or 0) == 0 and not p.quantizeSteps then
     return generateCustom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   end
 
