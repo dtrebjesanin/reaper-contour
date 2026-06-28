@@ -253,17 +253,20 @@ local function loadCustom()
   for _, pr in ipairs(store) do pr.points = customshape.clampPoints(pr.points) end
   local idx = tonumber(reaper.GetExtState("Contour", "customIdx") or "") or 1
   if idx < 1 or idx > #store then idx = 1 end
-  local gx, gy, sn, ph = (reaper.GetExtState("Contour", "customGrid") or ""):match("^(%d+),(%d+),(%d),?(%d*)")
+  -- customGrid = "gridX,gridY,snap,padH[,ghost]" — ghost (preview overlay) optional + last so old saves
+  -- (4 fields) still parse, defaulting the preview ON.
+  local gx, gy, sn, ph, gh = (reaper.GetExtState("Contour", "customGrid") or ""):match("^(%d+),(%d+),(%d+),?(%d*),?(%d*)")
   local gridX = math.max(1, math.min(64, tonumber(gx) or 4))   -- pad grid divisions (time)
   local gridY = math.max(1, math.min(64, tonumber(gy) or 2))   -- pad grid divisions (value)
   local padH = math.max(90, math.min(600, tonumber(ph) or 200)) -- stretchable pad height (px)
-  return { store = store, idx = idx, gridX = gridX, gridY = gridY, snap = sn == "1", padH = padH }
+  return { store = store, idx = idx, gridX = gridX, gridY = gridY, snap = sn == "1", padH = padH, ghost = gh ~= "0" }
 end
 local function saveCustom(c)
   reaper.SetExtState("Contour", "customPresets", customshape.encode(c.store), true)
   reaper.SetExtState("Contour", "customIdx", tostring(c.idx), true)
   reaper.SetExtState("Contour", "customGrid",
-    string.format("%d,%d,%d,%d", c.gridX or 4, c.gridY or 2, c.snap and 1 or 0, c.padH or 200), true)
+    string.format("%d,%d,%d,%d,%d", c.gridX or 4, c.gridY or 2, c.snap and 1 or 0, c.padH or 200,
+      c.ghost == false and 0 or 1), true)
 end
 -- drag-to-resize state for the pad's bottom grabber (script-level; one panel instance)
 local padResize = { active = false, startY = 0, startH = 0 }
@@ -733,13 +736,18 @@ function M.draw(ctx, state, detected)
       reaper.ImGui_SameLine(ctx)
       local csn, sn = reaper.ImGui_Checkbox(ctx, "Snap##cust_snap", c.snap and true or false)
       if csn then c.snap = sn; saveCustom(c) end
+      reaper.ImGui_SameLine(ctx)
+      -- the ghost = a dim preview of what the drawn cycle becomes after the per-cycle modifiers; toggle off
+      -- for a clean editing canvas. Defaults on; persisted with the other pad settings.
+      local cgh, gh = reaper.ImGui_Checkbox(ctx, "Preview##cust_ghost", c.ghost ~= false)
+      if cgh then c.ghost = gh; saveCustom(c) end
     end
     -- the pad (height is user-stretchable via the grabber below; persisted). The ghost overlay shows
     -- what the drawn cycle becomes after the per-cycle modifiers (Swing/Steps/Smooth/Phase).
     local padW = reaper.ImGui_GetContentRegionAvail and select(1, reaper.ImGui_GetContentRegionAvail(ctx)) or 360
     local padChanged = drawpad.draw(ctx, c.store[c.idx].points,
       { width = padW, height = c.padH or 200, id = "##cust_pad", gridX = c.gridX, gridY = c.gridY, snap = c.snap,
-        overlay = customOverlayPoints(g) })
+        overlay = (c.ghost ~= false) and customOverlayPoints(g) or nil })
     -- resize grabber: a thin strip under the pad; drag it to change the pad height
     reaper.ImGui_InvisibleButton(ctx, "##cust_pad_resize", padW, 7)
     if reaper.ImGui_IsItemHovered(ctx) or reaper.ImGui_IsItemActive(ctx) then
@@ -829,54 +837,45 @@ function M.draw(ctx, state, detected)
 
   reaper.ImGui_Separator(ctx)
 
-  -- == Shaping (native CC LFO parity + extras) ==
-  reaper.ImGui_Text(ctx, "Shaping")
+  -- == Shaping == split into two groups by WHERE the effect lands:
+  --   * Cycle shape   — reshapes the wave WITHIN each cycle (this is exactly what the custom pad ghost shows).
+  --   * Across the selection — level/ramp modifiers applied over the WHOLE write (the per-cycle ghost omits these).
   do
     local changed
     local sid = currentShapeId(g)
     -- Random / Drift use dedicated emitters that ignore Phase, Freq skew, Swing and the
     -- Steps / Smooth modifiers — hide those controls for them so the panel shows only what has effect.
     local special = (sid == "random" or sid == "drift")
+
+    -- -- Cycle shape ---------------------------------------------------------------------------------
+    -- For Random/Drift every per-cycle control is hidden, so skip the header too (no empty group).
+    if not special then reaper.ImGui_Text(ctx, "Cycle shape") end
     -- Phase 0..100 slider units (phase/100 cycles; 100 = one full cycle), converted in buildParams.
     -- All shaping faders: double-click snaps to the notch (default).
     if not special then
       changed, g.phase = reaper.ImGui_SliderInt(ctx, "Phase##gen_phase", g.phase, 0, 100, "%d")
       acc(changed); acc(common.tickReset(ctx, g, "phase", 0, 100, 0))
     end
-    -- Amp skew / Tilt apply to every shape (the dedicated emitters use them too). Freq skew is gated
-    -- below with the other periodic-only modulators.
-    changed, g.ampSkew = reaper.ImGui_SliderInt(ctx, "Amp skew##gen_ampskew", g.ampSkew, -100, 100, "%d")
-    acc(changed); acc(common.tickReset(ctx, g, "ampSkew", -100, 100, 0))
     -- Pulse width only for Square.
-    if currentShapeId(g) == "square" then
+    if sid == "square" then
       changed, g.pulseWidth = reaper.ImGui_SliderDouble(ctx, "Pulse width##gen_pw", g.pulseWidth, 0.01, 0.99, "%.2f")
       acc(changed); acc(common.tickReset(ctx, g, "pulseWidth", 0.01, 0.99, 0.5))
     end
     -- Edge only for Trapezoid (0 = square, 100 = triangle).
-    if currentShapeId(g) == "trapezoid" then
+    if sid == "trapezoid" then
       changed, g.edge = reaper.ImGui_SliderInt(ctx, "Edge##gen_edge", g.edge, 0, 100, "%d")
       acc(changed); acc(common.tickReset(ctx, g, "edge", 0, 100, 50))
     end
     -- Attack for Triangle (peak position, % of cycle).
-    if currentShapeId(g) == "triangle" then
+    if sid == "triangle" then
       changed, g.attack = reaper.ImGui_SliderInt(ctx, "Attack##gen_attack", g.attack, 1, 99, "%d")
       acc(changed); acc(common.tickReset(ctx, g, "attack", 1, 99, 50))
     end
     -- Curve for Saw Up/Down + Triangle (ease steepness). Bipolar: 0 = linear, + one way, - the other.
-    if currentShapeId(g) == "saw" or currentShapeId(g) == "sawdown" or currentShapeId(g) == "triangle" then
+    if sid == "saw" or sid == "sawdown" or sid == "triangle" then
       changed, g.curve = reaper.ImGui_SliderInt(ctx, "Curve##gen_curve", g.curve, -100, 100, "%d")
       acc(changed); acc(common.tickReset(ctx, g, "curve", -100, 100, 0))
     end
-    if not special then
-      changed, g.freqSkew = reaper.ImGui_SliderInt(ctx, "Freq skew##gen_freqskew", g.freqSkew, -100, 100, "%d")
-      acc(changed); acc(common.tickReset(ctx, g, "freqSkew", -100, 100, 0))
-    end
-    -- Two independent tilt sliders: Tilt L is anchored at the LEFT edge (raises/lowers the right end;
-    -- REAPER's native tilt); Tilt R is anchored at the RIGHT edge (raises/lowers the left end).
-    changed, g.tilt = reaper.ImGui_SliderInt(ctx, "Tilt L##gen_tilt", g.tilt, -100, 100, "%d")
-    acc(changed); acc(common.tickReset(ctx, g, "tilt", -100, 100, 0))
-    changed, g.tiltR = reaper.ImGui_SliderInt(ctx, "Tilt R##gen_tiltR", g.tiltR, -100, 100, "%d")
-    acc(changed); acc(common.tickReset(ctx, g, "tiltR", -100, 100, 0))
     -- Swing for periodic shapes EXCEPT triangle, whose Attack already controls peak position (Swing
     -- there would just duplicate it). Custom honors Swing via the generic SSS path.
     if not special and sid ~= "triangle" then
@@ -895,6 +894,24 @@ function M.draw(ctx, state, detected)
       changed, g.smooth = reaper.ImGui_SliderInt(ctx, "Smooth##gen_smooth", g.smooth, 0, 100, "%d")
       acc(changed); acc(common.tickReset(ctx, g, "smooth", 0, 100, 0))
     end
+
+    -- -- Across the selection ------------------------------------------------------------------------
+    -- Ramps applied over the whole write (NOT reflected in the per-cycle ghost — they read in the lane).
+    reaper.ImGui_Separator(ctx)
+    reaper.ImGui_Text(ctx, "Across the selection")
+    -- Amp skew applies to every shape (the dedicated emitters use it too). Freq skew is periodic-only.
+    changed, g.ampSkew = reaper.ImGui_SliderInt(ctx, "Amp skew##gen_ampskew", g.ampSkew, -100, 100, "%d")
+    acc(changed); acc(common.tickReset(ctx, g, "ampSkew", -100, 100, 0))
+    if not special then
+      changed, g.freqSkew = reaper.ImGui_SliderInt(ctx, "Freq skew##gen_freqskew", g.freqSkew, -100, 100, "%d")
+      acc(changed); acc(common.tickReset(ctx, g, "freqSkew", -100, 100, 0))
+    end
+    -- Two independent tilt sliders: Tilt L is anchored at the LEFT edge (raises/lowers the right end;
+    -- REAPER's native tilt); Tilt R is anchored at the RIGHT edge (raises/lowers the left end).
+    changed, g.tilt = reaper.ImGui_SliderInt(ctx, "Tilt L##gen_tilt", g.tilt, -100, 100, "%d")
+    acc(changed); acc(common.tickReset(ctx, g, "tilt", -100, 100, 0))
+    changed, g.tiltR = reaper.ImGui_SliderInt(ctx, "Tilt R##gen_tiltR", g.tiltR, -100, 100, "%d")
+    acc(changed); acc(common.tickReset(ctx, g, "tiltR", -100, 100, 0))
   end
 
   reaper.ImGui_Separator(ctx)

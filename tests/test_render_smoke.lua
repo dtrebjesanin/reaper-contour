@@ -101,6 +101,18 @@ h.test("generate.draw runs across the modifier sweep", function()
   end
 end)
 
+-- ---- generate: custom ghost-preview toggle (Preview checkbox) ----------------------------------
+h.test("generate.draw custom renders with the ghost preview on AND off", function()
+  local st = newState(); st.op = "generate"; st.target = "envelope"
+  generate.draw(CTX, st, detEnv())
+  local g = st.gen; seedCustom(g); g.shapeIdx = 12   -- Custom
+  for _, ghost in ipairs({ true, false }) do
+    g.custom.ghost = ghost
+    stub.reset()
+    noThrow("custom ghost=" .. tostring(ghost), function() generate.draw(CTX, st, detEnv()) end)
+  end
+end)
+
 -- ---- reduce + transform panels -----------------------------------------------------------------
 h.test("reduce.draw runs across amounts and contexts", function()
   local st = newState(); st.op = "reduce"
