@@ -211,8 +211,7 @@ function M.start(ctx, detected)
   -- Deep copy a point list so the pristine "first state" can never be mutated by later edits.
   local function dcopy(arr)
     local out = {}
-    for i = 1, #arr do local p = arr[i]
-      out[i] = { idx = p.idx, t = p.t, v = p.v, shape = p.shape, tension = p.tension, sel = p.sel } end
+    for i = 1, #arr do out[i] = tr.clonePoint(arr[i]) end
     return out
   end
   g = { detected = detected, scope = scope, tgt = tgt, env = detected.details.env,
@@ -367,11 +366,9 @@ function M.frame(ctx)
       -- original outside points, and clear the widest extent ever written this session so any stray points
       -- left by widening stretches/warps are removed.
       newPts = {}
-      for i = 1, #(g.pristine or {}) do local p = g.pristine[i]
-        newPts[i] = { idx = p.idx, t = p.t, v = p.v, shape = p.shape, tension = p.tension, sel = p.sel } end
+      for i = 1, #(g.pristine or {}) do newPts[i] = tr.clonePoint(g.pristine[i]) end
       g.keep = {}
-      for i = 1, #(g.pristineKeep or {}) do local p = g.pristineKeep[i]
-        g.keep[i] = { idx = p.idx, t = p.t, v = p.v, shape = p.shape, tension = p.tension, sel = p.sel } end
+      for i = 1, #(g.pristineKeep or {}) do g.keep[i] = tr.clonePoint(g.pristineKeep[i]) end
       clrMin = math.min(g.everMin or b.tmin, b.tmin)
       clrMax = math.max(g.everMax or b.tmax, b.tmax)
     end

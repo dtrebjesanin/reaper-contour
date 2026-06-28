@@ -155,4 +155,15 @@ function M.flip(points, lo, hi)
   return out
 end
 
+-- Shallow-clone a point, optionally overriding any fields via the `overrides` table.
+-- Copies every field present on `p` (including idx, sel, etc.) so callers never silently
+-- drop fields they didn't know about. overrides is merged in after the copy; pass nil to
+-- get a plain clone.
+function M.clonePoint(p, overrides)
+  local out = {}
+  for k, v in pairs(p) do out[k] = v end
+  if overrides then for k, v in pairs(overrides) do out[k] = v end end
+  return out
+end
+
 return M
