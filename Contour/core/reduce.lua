@@ -124,9 +124,9 @@ local function fitOne(points, i, j, eps)
     end
     if not best or maxErr < best.err then best = { shape = cand.shape, err = maxErr, splitIdx = maxK, tension = 0 } end
   end
-  if best.err > eps and dv ~= 0 then                 -- rescue: only when no fixed shape fits a non-flat stretch
-    local bt, be, bk = fitBezier(points, i, j, p0, dt, dv)
-    if be and be <= eps then best = { shape = 5, err = be, splitIdx = bk, tension = bt } end
+  if best.err > eps and dv ~= 0 and dt ~= 0 then     -- rescue: only when no fixed shape fits a non-flat,
+    local bt, be, bk = fitBezier(points, i, j, p0, dt, dv)   -- non-vertical stretch (dt==0 -> every x=0,
+    if be and be <= eps then best = { shape = 5, err = be, splitIdx = bk, tension = bt } end   -- futile)
   end
   return best
 end

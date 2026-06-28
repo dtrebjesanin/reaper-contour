@@ -372,6 +372,8 @@ function CC:writeBulk(snapshot, points, t0, t1, opts)
   assignTicks(take, points, ppq0, ppq1)
   local newCCs = {}
   for _, pt in ipairs(points) do
+    -- tension is intentionally NOT carried here: encodeMerged bakes only the CC shape nibble (it can't
+    -- emit a CCBZ tension meta event). Bezier tension is applied afterward by applyPointShapes -> MIDI_SetCCShape.
     newCCs[#newCCs + 1] = { ppq = pt._tick, value = clampCC(pt.value), shape = pt.shape or ccShape, sel = pt.sel }
   end
 
