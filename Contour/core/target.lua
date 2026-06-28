@@ -171,6 +171,10 @@ local function assignTicks(take, points, ppq0, ppq1)
     if ppq > ppq1 - 1 then ppq = ppq1 - 1 elseif ppq < ppq0 then ppq = ppq0 end
     local tick = floor(ppq + 0.5)
     if lastTick and tick <= lastTick then tick = lastTick + 1 end
+    -- Re-clamp after the de-collision bump so an assigned tick never marches past ppq1-1 for very
+    -- dense input. Over-dense input may then legitimately re-collide at the ceiling — acceptable; the
+    -- goal is to never write past the range.
+    if tick > ppq1 - 1 then tick = ppq1 - 1 end
     lastTick = tick
     pt._tick = tick
   end

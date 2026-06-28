@@ -354,10 +354,14 @@ local function generateSaw(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew,
   -- Ramp value at cycle-position cp: PHASE shifts the waveform (shape-phase = cp - phase); each cycle
   -- ramps lo -> hi. Used for the partial values at the span edges.
   local function rampVal(cp) local f = cp - phase; f = f - floor(f); return lo + (hi - lo) * f end
-  -- Cycle-position of the j-th reset boundary: (j + phase), with odd-index resets swing-shifted by
-  -- swing*0.5 (the pair feel). At phase=0 this is exactly the old boundaryCP, and the j=1 start +
-  -- rampVal(0)=lo make the whole emitter byte-identical to the native saw.
-  local function resetCP(j) return (j % 2 == 1) and (j + phase + swing * 0.5) or (j + phase) end
+  -- Cycle-position of the j-th reset boundary: (j + phase), with odd-index INTERIOR resets swing-
+  -- shifted by swing*0.5 (the pair feel). The boundary at j>=N coincides with the span end and is
+  -- emitted by the final partial-ramp point, not as an interior reset, so it is NOT swing-shifted:
+  -- otherwise a NEGATIVE swing on an ODD cycle count pulls the j==N reset below the span end and
+  -- emits a spurious extra partial ramp that positive swing doesn't (the +/- asymmetry). Guarding
+  -- j>=N makes the reset emission symmetric for +/- swing. At swing=0 the shift is 0, so this is
+  -- byte-identical to the native saw (and the j=1 start + rampVal(0)=lo keep it so).
+  local function resetCP(j) return (j % 2 == 1 and j < N) and (j + phase + swing * 0.5) or (j + phase) end
   local pts = {}
   emit(pts, 0, rampVal(0), rampShape, tension)  -- partial ramp value at the span start (lo when phase=0)
   local j = (phase > 1e-9) and 0 or 1           -- phase>0 can place a reset inside the first cycle

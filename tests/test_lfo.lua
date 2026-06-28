@@ -434,6 +434,24 @@ h.test("saw with swing stays sparse and shifts the reset boundary", function()
   h.truthy(math.abs(swung[2].time - flat[2].time) > 1e-3, "swing must shift the saw boundary")
 end)
 
+-- Saw swing is SYMMETRIC for +/- on an ODD cycle count. A negative swing used to pull the j==N
+-- reset (which coincides with the span end) below the boundary and emit a spurious extra partial
+-- ramp that positive swing didn't — an asymmetry only visible on odd cycle counts. +0.7 and -0.7
+-- must now yield the same number of reset/peak points (and the same total point count).
+h.test("saw swing +/- symmetric reset count on odd cycles", function()
+  local function peaks(sw)
+    local pts = lfo.generate({ t0 = 0, t1 = 3 },
+      { shape = "saw", rate = { mode = "free", cycles = 3 }, amplitude = 1, baseline = 0, swing = sw })
+    local n = 0
+    for _, p in ipairs(pts) do if math.abs(p.value - 1) < 1e-9 then n = n + 1 end end
+    return #pts, n
+  end
+  local totPos, peakPos = peaks(0.7)
+  local totNeg, peakNeg = peaks(-0.7)
+  h.eq(peakNeg, peakPos, "+/- swing must emit the same number of peak/reset points on odd cycles")
+  h.eq(totNeg, totPos, "+/- swing must emit the same total point count on odd cycles")
+end)
+
 -- Random (S&H): one value per cycle, held flat (step CC shape 0); values differ non-monotonically.
 h.test("random S&H: per-cycle held random values, step shape", function()
   local pts = lfo.generate({ t0 = 0, t1 = 4 },
