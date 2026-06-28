@@ -16,6 +16,7 @@ local lfo         = require("core.lfo")
 local target      = require("core.target")
 local customshape = require("core.customshape")
 local starters    = require("core.starters")
+local genpreset   = require("core.genpreset")
 local drawpad     = require("ui.drawpad")
 local common      = require("ui.common")
 
@@ -270,6 +271,29 @@ local function activePoints(g)
   if not g.custom then g.custom = loadCustom() end
   local pr = g.custom.store[g.custom.idx]
   return pr and pr.points or {}
+end
+
+-- Generate-panel presets: capture/recall the documented controls (exactly the DEFAULTS keys: shape +
+-- rate + level + every modulator) as named presets. Target-specific fields (lane/ccNum) and the Live
+-- toggle are NOT captured. The custom-shape store is separate; a preset with shapeIdx=custom recalls
+-- whichever custom preset is currently active.
+local function captureParams(g)
+  local params = {}
+  for k in pairs(DEFAULTS) do params[k] = g[k] end
+  return params
+end
+local function applyParams(g, params)
+  for k in pairs(DEFAULTS) do if params[k] ~= nil then g[k] = params[k] end end
+end
+local function loadGenPresets()
+  local store = genpreset.decode(reaper.GetExtState("Contour", "genPresets") or "")
+  local idx = tonumber(reaper.GetExtState("Contour", "genPresetIdx") or "") or 0
+  if idx < 0 or idx > #store then idx = 0 end   -- 0 = "(none)"; 1..#store selects a preset
+  return { store = store, idx = idx }
+end
+local function saveGenPresets(gp)
+  reaper.SetExtState("Contour", "genPresets", genpreset.encode(gp.store), true)
+  reaper.SetExtState("Contour", "genPresetIdx", tostring(gp.idx or 0), true)
 end
 
 -- Build the lfo.generate params + per-shape output (ppc / ccShape) from panel state.
@@ -538,6 +562,42 @@ function M.draw(ctx, state, detected)
   -- "a value actually changed this frame" gate that prevents idle-frame writes.
   local editedThisFrame = false
   local function acc(changed) if changed then editedThisFrame = true end end
+
+  -- == Generate presets == (recall/save the WHOLE config — shape + rate + every control)
+  do
+    if not g.genPre then g.genPre = loadGenPresets() end
+    local gp = g.genPre
+    local items = "(none)\0"
+    for _, pr in ipairs(gp.store) do items = items .. pr.name .. "\0" end
+    reaper.ImGui_SetNextItemWidth(ctx, 180)
+    local chg, idx = reaper.ImGui_Combo(ctx, "Preset##gen_preset", gp.idx, items, #gp.store + 1)
+    if chg then
+      gp.idx = idx
+      if idx >= 1 and gp.store[idx] then applyParams(g, gp.store[idx].params); acc(true) end  -- recall
+      saveGenPresets(gp)
+    end
+    reaper.ImGui_SameLine(ctx)
+    if reaper.ImGui_Button(ctx, "Save##gen_presave") and gp.idx >= 1 and gp.store[gp.idx] then
+      gp.store[gp.idx].params = captureParams(g); saveGenPresets(gp)        -- overwrite with live settings
+    end
+    reaper.ImGui_SameLine(ctx)
+    if reaper.ImGui_Button(ctx, "New##gen_prenew") then
+      gp.store[#gp.store + 1] = { name = "Preset " .. (#gp.store + 1), params = captureParams(g) }
+      gp.idx = #gp.store; saveGenPresets(gp)
+    end
+    reaper.ImGui_SameLine(ctx)
+    if reaper.ImGui_Button(ctx, "Del##gen_predel") and gp.idx >= 1 and gp.store[gp.idx] then
+      table.remove(gp.store, gp.idx); if gp.idx > #gp.store then gp.idx = #gp.store end; saveGenPresets(gp)
+    end
+    if gp.idx >= 1 and gp.store[gp.idx] then                                -- rename the selected preset
+      local pr = gp.store[gp.idx]
+      reaper.ImGui_SetNextItemWidth(ctx, 180)
+      local rv, nm = reaper.ImGui_InputText(ctx, "Name##gen_prename", pr.name or "")
+      if rv then pr.name = nm end
+      if reaper.ImGui_IsItemDeactivatedAfterEdit and reaper.ImGui_IsItemDeactivatedAfterEdit(ctx) then saveGenPresets(gp) end
+    end
+  end
+  reaper.ImGui_Separator(ctx)
 
   -- == Shape ==
   do

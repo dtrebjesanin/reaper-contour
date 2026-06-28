@@ -31,6 +31,7 @@
 --   [nomain] core/arrangecoords.lua
 --   [nomain] core/context.lua
 --   [nomain] core/customshape.lua
+--   [nomain] core/genpreset.lua
 --   [nomain] core/lfo.lua
 --   [nomain] core/midistream.lua
 --   [nomain] core/reduce.lua
