@@ -29,6 +29,15 @@ h.test("decode tolerates empty / malformed input", function()
   h.eq(#cs.decode("garbage~~~|||"), 0)   -- no valid presets -> empty store, no error
 end)
 
+h.test("encodePoints/decodePoints round-trip a single point list (reused by genpreset)", function()
+  local pts = { { x = 0, y = -1, shape = 1, tension = 0 }, { x = 0.4, y = 0.5, shape = 5, tension = -0.3 },
+    { x = 1, y = 1, shape = 2, tension = 0 } }
+  local back = cs.decodePoints(cs.encodePoints(pts))
+  h.eq(#back, 3)
+  h.almost(back[2].x, 0.4); h.almost(back[2].y, 0.5); h.eq(back[2].shape, 5); h.almost(back[2].tension, -0.3)
+  h.eq(#cs.decodePoints(""), 0); h.eq(#cs.decodePoints(nil), 0)   -- empty / nil safe
+end)
+
 h.test("clampPoints sorts, clamps, and pins endpoints", function()
   local out = cs.clampPoints({ { x = 0.9, y = 5, shape = 9, tension = 3 },
     { x = -0.2, y = -5, shape = 1, tension = 0 }, { x = 0.5, y = 0, shape = 5, tension = -0.4 } })

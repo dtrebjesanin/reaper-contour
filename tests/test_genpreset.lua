@@ -23,6 +23,21 @@ h.test("names with delimiters survive the round-trip", function()
   h.eq(back[1].params.phase, 25)
 end)
 
+h.test("a preset carries an opaque embedded points string round-trip", function()
+  local store = { { name = "Wob", params = { shapeIdx = 12, swing = 0.2 },
+    points = "0,-1,1,0;0.5,1,5,0.6;1,-1,1,0" } }     -- contains ; and , (genpreset must escape ;)
+  local back = gp.decode(gp.encode(store))
+  h.eq(#back, 1)
+  h.eq(back[1].points, "0,-1,1,0;0.5,1,5,0.6;1,-1,1,0")
+  h.eq(back[1].params.shapeIdx, 12); h.almost(back[1].params.swing, 0.2)
+end)
+
+h.test("a preset WITHOUT points decodes with points = nil", function()
+  local back = gp.decode(gp.encode({ { name = "NoShape", params = { shapeIdx = 1 } } }))
+  h.eq(#back, 1)
+  h.truthy(back[1].points == nil, "no embedded points")
+end)
+
 h.test("decode tolerates empty / malformed input", function()
   h.eq(#gp.decode(""), 0)
   h.eq(#gp.decode(nil), 0)

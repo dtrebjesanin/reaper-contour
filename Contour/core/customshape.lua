@@ -105,14 +105,32 @@ local function esc(s) return (tostring(s):gsub("[%%|~;,]", ESC)) end
 local function unesc(s) return (tostring(s):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)) end
 local function num(v) return string.format("%.6g", tonumber(v) or 0) end
 
+-- Serialize a single point list to the ";"-separated "x,y,shape,tension" form (no name). Reused by
+-- M.encode and by genpreset (to embed a custom drawing inside a Generate preset).
+function M.encodePoints(points)
+  local pts = {}
+  for _, p in ipairs(points or {}) do
+    pts[#pts + 1] = table.concat({ num(p.x), num(p.y), num(p.shape or 1), num(p.tension or 0) }, ",")
+  end
+  return table.concat(pts, ";")
+end
+
+function M.decodePoints(str)
+  local pts = {}
+  for ptStr in ((str or "") .. ";"):gmatch("(.-);") do
+    if ptStr ~= "" then
+      local x, y, sh, ten = ptStr:match("^([^,]*),([^,]*),([^,]*),([^,]*)$")
+      if x then pts[#pts + 1] = { x = tonumber(x) or 0, y = tonumber(y) or 0,
+        shape = tonumber(sh) or 1, tension = tonumber(ten) or 0 } end
+    end
+  end
+  return pts
+end
+
 function M.encode(store)
   local presets = {}
   for _, pr in ipairs(store or {}) do
-    local pts = {}
-    for _, p in ipairs(pr.points or {}) do
-      pts[#pts + 1] = table.concat({ num(p.x), num(p.y), num(p.shape or 1), num(p.tension or 0) }, ",")
-    end
-    presets[#presets + 1] = esc(pr.name or "") .. "~" .. table.concat(pts, ";")
+    presets[#presets + 1] = esc(pr.name or "") .. "~" .. M.encodePoints(pr.points)
   end
   return table.concat(presets, "|")
 end
@@ -123,14 +141,7 @@ function M.decode(str)
   for chunk in (str .. "|"):gmatch("(.-)|") do
     local namePart, ptsPart = chunk:match("^(.-)~(.*)$")
     if namePart then
-      local pts = {}
-      for ptStr in (ptsPart .. ";"):gmatch("(.-);") do
-        if ptStr ~= "" then
-          local x, y, sh, ten = ptStr:match("^([^,]*),([^,]*),([^,]*),([^,]*)$")
-          if x then pts[#pts + 1] = { x = tonumber(x) or 0, y = tonumber(y) or 0,
-            shape = tonumber(sh) or 1, tension = tonumber(ten) or 0 } end
-        end
-      end
+      local pts = M.decodePoints(ptsPart)
       if #pts >= 1 then store[#store + 1] = { name = unesc(namePart), points = pts } end
     end
   end

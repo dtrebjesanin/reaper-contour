@@ -295,6 +295,30 @@ local function saveGenPresets(gp)
   reaper.SetExtState("Contour", "genPresets", genpreset.encode(gp.store), true)
   reaper.SetExtState("Contour", "genPresetIdx", tostring(gp.idx or 0), true)
 end
+-- The encoded custom drawing to embed in a Generate preset (nil unless the shape is Custom), so a
+-- Custom-based preset is self-contained. (Uses SHAPES directly, not currentShapeId, to stay above it.)
+local function genPresetPoints(g)
+  local sid = SHAPES[(g.shapeIdx or 0) + 1] and SHAPES[(g.shapeIdx or 0) + 1].id
+  if sid ~= "custom" then return nil end
+  return customshape.encodePoints(activePoints(g))
+end
+-- Recall a Generate preset: apply its controls, and if it embeds a Custom drawing (and lands on the
+-- Custom shape), materialize that drawing into the Shape library — upsert a Shape named after the
+-- preset and select it — so the preset reproduces its exact curve without depending on external state.
+local function recallGenPreset(g, pr)
+  applyParams(g, pr.params)
+  local sid = SHAPES[(g.shapeIdx or 0) + 1] and SHAPES[(g.shapeIdx or 0) + 1].id
+  if pr.points and pr.points ~= "" and sid == "custom" then
+    if not g.custom then g.custom = loadCustom() end
+    local pts = customshape.clampPoints(customshape.decodePoints(pr.points))
+    local slot
+    for i, sh in ipairs(g.custom.store) do if sh.name == pr.name then slot = i; break end end
+    if slot then g.custom.store[slot].points = pts
+    else g.custom.store[#g.custom.store + 1] = { name = pr.name, points = pts }; slot = #g.custom.store end
+    g.custom.idx = slot
+    saveCustom(g.custom)
+  end
+end
 
 -- Build the lfo.generate params + per-shape output (ppc / ccShape) from panel state.
 --
@@ -573,16 +597,17 @@ function M.draw(ctx, state, detected)
     local chg, idx = reaper.ImGui_Combo(ctx, "Preset##gen_preset", gp.idx, items, #gp.store + 1)
     if chg then
       gp.idx = idx
-      if idx >= 1 and gp.store[idx] then applyParams(g, gp.store[idx].params); acc(true) end  -- recall
+      if idx >= 1 and gp.store[idx] then recallGenPreset(g, gp.store[idx]); acc(true) end  -- recall (+ embedded shape)
       saveGenPresets(gp)
     end
     reaper.ImGui_SameLine(ctx)
     if reaper.ImGui_Button(ctx, "Save##gen_presave") and gp.idx >= 1 and gp.store[gp.idx] then
-      gp.store[gp.idx].params = captureParams(g); saveGenPresets(gp)        -- overwrite with live settings
+      gp.store[gp.idx].params = captureParams(g)                            -- overwrite with live settings
+      gp.store[gp.idx].points = genPresetPoints(g); saveGenPresets(gp)      -- embed the drawing if Custom
     end
     reaper.ImGui_SameLine(ctx)
     if reaper.ImGui_Button(ctx, "New##gen_prenew") then
-      gp.store[#gp.store + 1] = { name = "Preset " .. (#gp.store + 1), params = captureParams(g) }
+      gp.store[#gp.store + 1] = { name = "Preset " .. (#gp.store + 1), params = captureParams(g), points = genPresetPoints(g) }
       gp.idx = #gp.store; saveGenPresets(gp)
     end
     reaper.ImGui_SameLine(ctx)
@@ -629,11 +654,11 @@ function M.draw(ctx, state, detected)
   if currentShapeId(g) == "custom" then
     if not g.custom then g.custom = loadCustom() end
     local c = g.custom
-    -- preset dropdown
+    -- shape-library dropdown (named drawn shapes; distinct from the panel-wide Generate "Preset")
     local names = {}
     for _, pr in ipairs(c.store) do names[#names + 1] = pr.name end
     local items = table.concat(names, "\0") .. "\0"
-    local chg, idx = reaper.ImGui_Combo(ctx, "Preset##cust_preset", c.idx - 1, items, #items)
+    local chg, idx = reaper.ImGui_Combo(ctx, "Shape##cust_preset", c.idx - 1, items, #items)
     if chg then c.idx = idx + 1; saveCustom(c); acc(true) end
     reaper.ImGui_SameLine(ctx)
     if reaper.ImGui_Button(ctx, "New##cust_new") then
