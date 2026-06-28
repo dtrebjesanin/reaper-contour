@@ -42,4 +42,44 @@ h.test("clampPoints sorts, clamps, and pins endpoints", function()
   for i = 2, #out do h.truthy(out[i].x >= out[i-1].x, "x ascending") end
 end)
 
+-- generateCustom repeats the preset at the Rate, scales by amplitude/baseline, carries shapes/tensions.
+local lfo = require("core.lfo")
+local function customPts(extra)
+  local p = { shape = "custom", rate = { mode = "free", cycles = 3 }, amplitude = 1, baseline = 0,
+    customPoints = { { x = 0, y = -1, shape = 1, tension = 0 }, { x = 0.5, y = 1, shape = 5, tension = 0.5 },
+      { x = 1, y = -1, shape = 1, tension = 0 } } }
+  for k, v in pairs(extra or {}) do p[k] = v end
+  return lfo.generate({ t0 = 0, t1 = 3 }, p)
+end
+
+h.test("custom repeats at the rate and covers the span", function()
+  local pts = customPts()
+  h.truthy(#pts >= 3, "produced points")
+  h.almost(pts[1].time, 0, 1e-9); h.almost(pts[#pts].time, 3, 1e-9)
+  for i = 2, #pts do h.truthy(pts[i].time > pts[i-1].time, "strictly increasing") end
+  -- 3 cycles -> at least 3 peaks (value near +1) somewhere
+  local peaks = 0
+  for _, p in ipairs(pts) do if math.abs(p.value - 1) < 1e-6 then peaks = peaks + 1 end end
+  h.truthy(peaks >= 3, "one peak per cycle (got " .. peaks .. ")")
+end)
+
+h.test("custom carries per-point bezier shape + tension", function()
+  local bez = false
+  for _, p in ipairs(customPts()) do if p.shape == 5 and math.abs((p.tension or 0) - 0.5) < 1e-9 then bez = true end end
+  h.truthy(bez, "the mid point's bezier shape+tension is carried through")
+end)
+
+h.test("custom amp/freq skew does not densify (count stable)", function()
+  local a = customPts()
+  local b = customPts({ ampSkew = 0.7, freqSkew = 0.8 })
+  h.eq(#a, #b, "skew must not change the custom point count")
+end)
+
+h.test("custom degenerate (no points) is a safe flat line", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 2 }, { shape = "custom", customPoints = {},
+    rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0 })
+  h.truthy(#pts >= 2, "still covers the span")
+  h.almost(pts[1].time, 0, 1e-9); h.almost(pts[#pts].time, 2, 1e-9)
+end)
+
 h.run()

@@ -449,6 +449,66 @@ local function generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, amp
   return pts
 end
 
+-- Custom: a user-drawn one-cycle shape (points {x in [0,1], y in [-1,1], shape, tension}) repeated at
+-- the Rate. SPARSE emitter like generateSaw: interior points per cycle + a saw-style boundary (cycle-
+-- END value then next cycle-START value one eps later) so a discontinuous boundary renders as a jump
+-- and a seamless one is a harmless flat eps-segment. PHASE/FREQ-SKEW/AMP-SKEW/TILT/FADE apply.
+local function generateCustom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
+  local N = totalCycles
+  local phase = p.phase or 0
+  local cp = p.customPoints or {}
+  local function emit(pts, rel, y, shp, ten)
+    if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
+    local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
+    local half = ampHalf(amp, ampSkew, rel)
+    pts[#pts + 1] = { time = t0 + rel * spanLen, value = baseV + half * y * depth + tiltOffset * rel, shape = shp, tension = ten }
+  end
+  if #cp < 2 then
+    local y = (cp[1] and cp[1].y) or 0
+    local pts = {}; emit(pts, 0, y, 1, 0); emit(pts, 1, y, 1, 0); return pts
+  end
+  -- linear value of the custom curve at shape-phase x (span-edge anchors only; per-segment SHAPE is
+  -- carried on the emitted points, not recomputed here).
+  local function valAtX(x)
+    x = x - floor(x)
+    for i = 1, #cp - 1 do
+      if x >= cp[i].x - 1e-12 and x <= cp[i + 1].x + 1e-12 then
+        local w = cp[i + 1].x - cp[i].x
+        local t = (w > 1e-9) and (x - cp[i].x) / w or 0
+        return cp[i].y + (cp[i + 1].y - cp[i].y) * t
+      end
+    end
+    return cp[#cp].y
+  end
+  local eps = math.min(1e-4, 0.25 / N)
+  local samp = {}
+  for c = floor(-phase) - 1, ceil(N) + 1 do
+    for i = 1, #cp do
+      local x = cp[i].x
+      if x > 1e-9 and x < 1 - 1e-9 then
+        local prog = (c + x + phase) / N
+        if prog > 1e-9 and prog < 1 - 1e-9 then
+          samp[#samp + 1] = { rel = M.freqWarpInverse(prog, freqSkew), y = cp[i].y, shp = cp[i].shape or 1, ten = cp[i].tension or 0 }
+        end
+      end
+    end
+    local prog = (c + phase) / N                              -- cycle boundary at shape-phase c
+    if prog > 1e-9 and prog < 1 - 1e-9 then
+      local relB = M.freqWarpInverse(prog, freqSkew)
+      samp[#samp + 1] = { rel = relB, y = cp[#cp].y, shp = 1, ten = 0 }                                    -- prev cycle end (x=1) -> wrap
+      samp[#samp + 1] = { rel = relB + eps, y = cp[1].y, shp = cp[1].shape or 1, ten = cp[1].tension or 0 } -- this cycle start (x=0)
+    end
+  end
+  samp[#samp + 1] = { rel = 0, y = valAtX(-phase), shp = cp[1].shape or 1, ten = cp[1].tension or 0 }
+  samp[#samp + 1] = { rel = 1, y = valAtX(N - phase), shp = 1, ten = 0 }
+  table.sort(samp, function(a, b) return a.rel < b.rel end)
+  local pts, lastRel = {}, nil
+  for _, s in ipairs(samp) do
+    if lastRel == nil or s.rel - lastRel > 1e-9 then emit(pts, s.rel, s.y, s.shp, s.ten); lastRel = s.rel end
+  end
+  return pts
+end
+
 -- Random (Sample & Hold) and Drift (smooth random) share one emitter: one random value per cycle
 -- (shapes.randomAt(seed, cycleIndex)). They differ only in interpolation between cycle values:
 -- S&H holds flat (step CC shape 0); Drift eases (slow start/end CC shape 2). Sparse: one anchor per
@@ -559,6 +619,12 @@ function M.generate(span, params)
   -- RECTIFIED SINE: sparse |sin| humps (rounded, with crisp cusps). Smooth/Steps route to generic.
   if p.shape == "rectsine" and (p.smooth or 0) == 0 and not p.quantizeSteps then
     return generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
+  end
+
+  -- CUSTOM: user-drawn one-cycle shape repeated at the Rate. (Smooth/Steps are Phase 2; the guard is
+  -- inert now since they're hidden for Custom.)
+  if p.shape == "custom" and (p.smooth or 0) == 0 and not p.quantizeSteps then
+    return generateCustom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   end
 
   -- Generic ppc sampler (smoothed/quantized waveforms, plus rectsine/sine2 when a modifier bends them).

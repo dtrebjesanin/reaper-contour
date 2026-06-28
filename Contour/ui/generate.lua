@@ -120,6 +120,7 @@ local SHAPE_OUTPUT = {
   sine2      = { ppc = 4,  ccShape = 2 },   -- peakier sine: 4-anchor emitter (slow start/end)
   random     = { ppc = 1,  ccShape = 0 },
   drift      = { ppc = 1,  ccShape = 2 },
+  custom     = { ppc = 8,  ccShape = 1 },   -- user-drawn; dedicated emitter tags per-point shapes
 }
 local DEFAULT_OUTPUT = { ppc = 16, ccShape = 1 }
 
