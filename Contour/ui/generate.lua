@@ -17,6 +17,7 @@ local target      = require("core.target")
 local customshape = require("core.customshape")
 local starters    = require("core.starters")
 local drawpad     = require("ui.drawpad")
+local common      = require("ui.common")
 
 -- Shape ids MUST match what core/shapes.lua / core/lfo.lua expect. "None" is FIRST and the
 -- DEFAULT (v2.1 U1): a NO-OP — picking it generates and writes NOTHING (canGenerate=false),
@@ -61,36 +62,8 @@ local FEELS = {
 local FEEL_ITEMS   = ""
 for _, f in ipairs(FEELS) do FEEL_ITEMS = FEEL_ITEMS .. f.label .. "\0" end
 
--- Scope: write across the Time selection, or the target's Entire item/envelope (native parity).
-local SCOPE_MODES = { "Time selection", "Entire item" }
-local SCOPE_ITEMS = ""
-for _, s in ipairs(SCOPE_MODES) do SCOPE_ITEMS = SCOPE_ITEMS .. s .. "\0" end
-local SCOPE_TIMESEL, SCOPE_ENTIRE = 0, 1
-
--- Resolve the write span (project seconds) from the scope: the time selection, or the target's
--- fullSpan(). ENVELOPES are time-selection ONLY (a track envelope has no item; "entire" = the whole
--- project is rarely wanted), so Entire-item applies only to CC and AI. Falls back to the time
--- selection if Entire-item has no valid span.
-local function spanFor(tgt, detected, g)
-  local kind = tgt and tgt.kind and tgt:kind()
-  -- Entire-item scope uses fullSpan() (CC item bounds, or the AI's own bounds). Envelopes have no
-  -- item, so they stay time-selection only (the kind ~= "envelope" guard).
-  if g.scope == SCOPE_ENTIRE and kind and kind ~= "envelope" and tgt.fullSpan then
-    local a, b = tgt:fullSpan()
-    if a and b and b > a then return a, b end
-  end
-  local t0, t1 = detected.t0, detected.t1
-  -- Automation items: REAPER drops points outside [pos, pos+len], so intersect the time-selection
-  -- span with the AI's bounds (Entire-item already returned the AI bounds above).
-  if kind == "ai" and tgt.fullSpan then
-    local a, b = tgt:fullSpan()
-    if a and b then
-      if t0 < a then t0 = a end
-      if t1 > b then t1 = b end
-    end
-  end
-  return t0, t1
-end
+-- Scope + spanFor live in ui.common (shared with the other panels); use common.SCOPE_* and
+-- common.spanFor instead of re-defining them here.
 
 -- ---------------------------------------------------------------------------
 -- Shape-aware output: points-per-cycle + a FALLBACK MIDI CC shape per LFO shape.
@@ -184,7 +157,7 @@ local DEFAULTS = {
   curve      = 0,        -- -100..100 (Saw/Triangle bezier ease steepness; bipolar, 0 = linear)
   attack     = 50,       -- 1..99 % of cycle (Triangle peak position)
   edge       = 50,       -- 0..100 % (Trapezoid edge width; /200 => [0,0.5])
-  scope      = SCOPE_TIMESEL,  -- Time selection (0) vs Entire item/envelope (1)
+  scope      = common.SCOPE_TIMESEL,  -- Time selection (0) vs Entire item/envelope (1)
 }
 
 -- ---------------------------------------------------------------------------
@@ -363,7 +336,7 @@ local function generateAndWrite(state, detected, g, noUndo)
   if tgt.kind and tgt:kind() == "cc" then tgt._lane = g.ccNum end
 
   local vmin, vmax = tgt:valueRange()
-  local st0, st1 = spanFor(tgt, detected, g)   -- time selection or entire item/envelope
+  local st0, st1 = common.spanFor(tgt, detected, g)   -- time selection or entire item/envelope
   local params, ccShape = buildParams(g, st0, vmin, vmax)
 
   local okGen, pts = pcall(lfo.generate, { t0 = st0, t1 = st1 }, params)
@@ -388,7 +361,7 @@ local function liveBulkWrite(tgt, snapshot, detected, g)
   if tgt.kind and tgt:kind() == "cc" then tgt._lane = g.ccNum end
 
   local vmin, vmax = tgt:valueRange()
-  local st0, st1 = spanFor(tgt, detected, g)   -- time selection or entire item/envelope
+  local st0, st1 = common.spanFor(tgt, detected, g)   -- time selection or entire item/envelope
   local params, ccShape = buildParams(g, st0, vmin, vmax)
 
   local okGen, pts = pcall(lfo.generate, { t0 = st0, t1 = st1 }, params)
@@ -414,7 +387,7 @@ local function canGenerate(detected, g)
   if not (detected and currentShapeId(g) ~= "none" and detected.details) then return false end
   -- A time selection is required in Time-selection scope AND always for envelopes (time-sel only);
   -- Entire-item scope (CC/AI) uses fullSpan() and needs no time selection.
-  local needTimeSel = g.scope == SCOPE_TIMESEL or detected.target == "envelope"
+  local needTimeSel = g.scope == common.SCOPE_TIMESEL or detected.target == "envelope"
   if needTimeSel and not detected.hasTimeSel then return false end
   if detected.target == "cc" then
     return g.ccNum >= 0 and g.ccNum <= 127 and detected.details.take ~= nil
@@ -480,8 +453,8 @@ function M.cleanup()
   liveGesture.errored = false
 end
 
--- Per-row reset is now DOUBLE-CLICK on the fader (snap to the default notch) — see tickReset
--- below. The old small "R" SmallButton per row was removed (the user preferred the double-click).
+-- Per-row reset is now DOUBLE-CLICK on the fader (snap to the default notch) — see common.tickReset.
+-- The old small "R" SmallButton per row was removed (the user preferred the double-click).
 -- CC# (an InputInt, not a fader) keeps its own inline R button.
 
 -- Per-target default amplitude: envelopes/automation items default to FULL range (100); MIDI CC to
@@ -491,43 +464,8 @@ local function defaultAmp(detected)
   return ((t == "envelope" or t == "ai") and 100) or 50
 end
 
--- Draw a small "notch" on the just-drawn slider at its default value, so the neutral/default
--- position is visible like a fader detent. Call IMMEDIATELY after the slider (before any SameLine
--- button). The slider frame is [itemMin.x, itemMin.x + CalcItemWidth]; the default value maps into
--- it. Guarded for missing DrawList APIs (older ReaImGui).
-local function drawDefaultTick(ctx, vmin, vmax, vdef)
-  if not (reaper.ImGui_GetItemRectMin and reaper.ImGui_GetItemRectMax and reaper.ImGui_GetWindowDrawList
-      and reaper.ImGui_DrawList_AddLine and reaper.ImGui_CalcItemWidth) then return end
-  if vmax <= vmin then return end
-  local x0, y0 = reaper.ImGui_GetItemRectMin(ctx)
-  local _, y1 = reaper.ImGui_GetItemRectMax(ctx)
-  local frameW = reaper.ImGui_CalcItemWidth(ctx)
-  if not frameW or frameW <= 0 then return end
-  local inset = math.min(7, frameW * 0.04)
-  local frac = (vdef - vmin) / (vmax - vmin)
-  if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
-  local x = x0 + inset + frac * (frameW - 2 * inset)
-  local dl = reaper.ImGui_GetWindowDrawList(ctx)
-  reaper.ImGui_DrawList_AddLine(dl, x, y0 + 2, x, y1 - 2, 0xFFFFFFA0, 1.0)
-end
-
--- Draw the default notch on the just-drawn slider AND snap it to that default on DOUBLE-CLICK
--- (replaces the per-row reset button). Must be called IMMEDIATELY after the slider. The value is
--- overridden AFTER the widget returned, so the single frame-end live write lands on the default
--- with no flicker. Returns true if a reset happened (so the caller marks the frame edited).
-local function tickReset(ctx, g, key, vmin, vmax, vdef)
-  drawDefaultTick(ctx, vmin, vmax, vdef)
-  -- Double-click the slider's LABEL to reset to the default notch. (Double-clicking the fader head
-  -- itself doesn't work: the slider widget consumes the click before IsItemHovered/IsMouseDoubleClicked
-  -- can see it — IsItemHovered is false while the slider is active. Label double-click is reliable.)
-  -- The value is overridden after the widget returns, so the frame-end live write lands on the default.
-  if reaper.ImGui_IsItemHovered and reaper.ImGui_IsMouseDoubleClicked
-     and reaper.ImGui_IsItemHovered(ctx) and reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
-    g[key] = vdef
-    return true
-  end
-  return false
-end
+-- The default-notch draw + double-click reset (drawDefaultTick / tickReset) live in ui.common;
+-- this panel calls common.tickReset directly.
 
 function M.draw(ctx, state, detected)
   local g = ui(state)
@@ -710,7 +648,7 @@ function M.draw(ctx, state, detected)
   -- Envelopes are TIME-SELECTION ONLY — a track envelope has no item — so the selector is hidden
   -- for them and the span is always the time selection.)
   if not (detected and detected.target == "envelope") then
-    local changed, idx = reaper.ImGui_Combo(ctx, "Scope##gen_scope", g.scope, SCOPE_ITEMS, #SCOPE_ITEMS)
+    local changed, idx = reaper.ImGui_Combo(ctx, "Scope##gen_scope", g.scope, common.SCOPE_ITEMS, #common.SCOPE_ITEMS)
     if changed and idx ~= g.scope then g.scope = idx; acc(true) end
   end
 
@@ -727,22 +665,22 @@ function M.draw(ctx, state, detected)
     -- stays a small 3-option dropdown.
     local cL, iL = reaper.ImGui_SliderInt(ctx, "Length##gen_len", g.lengthIdx, 0, #NOTE_VALUES - 1, NOTE_LABELS[g.lengthIdx + 1] or "")
     if cL and iL ~= g.lengthIdx then g.lengthIdx = math.max(0, math.min(#NOTE_VALUES - 1, iL)); acc(true) end
-    acc(tickReset(ctx, g, "lengthIdx", 0, #NOTE_VALUES - 1, DEFAULTS.lengthIdx))
+    acc(common.tickReset(ctx, g, "lengthIdx", 0, #NOTE_VALUES - 1, DEFAULTS.lengthIdx))
     local cM, iM = reaper.ImGui_Combo(ctx, "Feel##gen_feel", g.feelIdx, FEEL_ITEMS, #FEEL_ITEMS)
     if cM and iM ~= g.feelIdx then g.feelIdx = iM; acc(true) end
     local cF, iF = reaper.ImGui_SliderInt(ctx, "Frequency##gen_freq", g.freqIdx, 0, #FREQ_VALUES - 1, FREQ_LABELS[g.freqIdx + 1] or "")
     if cF and iF ~= g.freqIdx then g.freqIdx = math.max(0, math.min(#FREQ_VALUES - 1, iF)); acc(true) end
-    acc(tickReset(ctx, g, "freqIdx", 0, #FREQ_VALUES - 1, DEFAULTS.freqIdx))
+    acc(common.tickReset(ctx, g, "freqIdx", 0, #FREQ_VALUES - 1, DEFAULTS.freqIdx))
   elseif g.rateMode == RATE_FREE then
     local changed
     changed, g.cycles = reaper.ImGui_SliderInt(ctx, "Cycles##gen_cycles", g.cycles, 1, 64, "%d")
     acc(changed)
-    acc(tickReset(ctx, g, "cycles", 1, 64, DEFAULTS.cycles))
+    acc(common.tickReset(ctx, g, "cycles", 1, 64, DEFAULTS.cycles))
   else -- RATE_HZ
     local changed
     changed, g.hz = reaper.ImGui_SliderDouble(ctx, "Hz##gen_hz", g.hz, 0.01, 50.0, "%.2f")
     acc(changed)
-    acc(tickReset(ctx, g, "hz", 0.01, 50.0, DEFAULTS.hz))
+    acc(common.tickReset(ctx, g, "hz", 0.01, 50.0, DEFAULTS.hz))
   end
 
   reaper.ImGui_Separator(ctx)
@@ -754,7 +692,7 @@ function M.draw(ctx, state, detected)
     -- Baseline -100..100 (0 = center). Double-click the fader to snap to the notch (default).
     changed, g.baseline = reaper.ImGui_SliderInt(ctx, "Baseline##gen_base", g.baseline, -100, 100, "%d")
     acc(changed)
-    acc(tickReset(ctx, g, "baseline", -100, 100, 0))
+    acc(common.tickReset(ctx, g, "baseline", -100, 100, 0))
     -- Amplitude: linear -200..200 (% of half range; negative inverts the wave, >100 clips). Plain
     -- SliderInt so Ctrl+click type-entry works. Notch + double-click snap to the per-target default
     -- (envelope/AI 100, CC 50).
@@ -762,7 +700,7 @@ function M.draw(ctx, state, detected)
     if changed then g.ampDirty = true end   -- user moved it: stop following the per-target default
     acc(changed)
     -- Double-click reset to the per-target default also resumes following it.
-    if tickReset(ctx, g, "amplitude", -200, 200, defaultAmp(detected)) then g.ampDirty = false; acc(true) end
+    if common.tickReset(ctx, g, "amplitude", -200, 200, defaultAmp(detected)) then g.ampDirty = false; acc(true) end
   end
 
   reaper.ImGui_Separator(ctx)
@@ -779,55 +717,55 @@ function M.draw(ctx, state, detected)
     -- All shaping faders: double-click snaps to the notch (default).
     if not special then
       changed, g.phase = reaper.ImGui_SliderInt(ctx, "Phase##gen_phase", g.phase, 0, 100, "%d")
-      acc(changed); acc(tickReset(ctx, g, "phase", 0, 100, 0))
+      acc(changed); acc(common.tickReset(ctx, g, "phase", 0, 100, 0))
     end
     -- Amp skew / Tilt apply to every shape (the dedicated emitters use them too). Freq skew is gated
     -- below with the other periodic-only modulators.
     changed, g.ampSkew = reaper.ImGui_SliderInt(ctx, "Amp skew##gen_ampskew", g.ampSkew, -100, 100, "%d")
-    acc(changed); acc(tickReset(ctx, g, "ampSkew", -100, 100, 0))
+    acc(changed); acc(common.tickReset(ctx, g, "ampSkew", -100, 100, 0))
     -- Pulse width only for Square.
     if currentShapeId(g) == "square" then
       changed, g.pulseWidth = reaper.ImGui_SliderDouble(ctx, "Pulse width##gen_pw", g.pulseWidth, 0.01, 0.99, "%.2f")
-      acc(changed); acc(tickReset(ctx, g, "pulseWidth", 0.01, 0.99, 0.5))
+      acc(changed); acc(common.tickReset(ctx, g, "pulseWidth", 0.01, 0.99, 0.5))
     end
     -- Edge only for Trapezoid (0 = square, 100 = triangle).
     if currentShapeId(g) == "trapezoid" then
       changed, g.edge = reaper.ImGui_SliderInt(ctx, "Edge##gen_edge", g.edge, 0, 100, "%d")
-      acc(changed); acc(tickReset(ctx, g, "edge", 0, 100, 50))
+      acc(changed); acc(common.tickReset(ctx, g, "edge", 0, 100, 50))
     end
     -- Attack for Triangle (peak position, % of cycle).
     if currentShapeId(g) == "triangle" then
       changed, g.attack = reaper.ImGui_SliderInt(ctx, "Attack##gen_attack", g.attack, 1, 99, "%d")
-      acc(changed); acc(tickReset(ctx, g, "attack", 1, 99, 50))
+      acc(changed); acc(common.tickReset(ctx, g, "attack", 1, 99, 50))
     end
     -- Curve for Saw Up/Down + Triangle (ease steepness). Bipolar: 0 = linear, + one way, - the other.
     if currentShapeId(g) == "saw" or currentShapeId(g) == "sawdown" or currentShapeId(g) == "triangle" then
       changed, g.curve = reaper.ImGui_SliderInt(ctx, "Curve##gen_curve", g.curve, -100, 100, "%d")
-      acc(changed); acc(tickReset(ctx, g, "curve", -100, 100, 0))
+      acc(changed); acc(common.tickReset(ctx, g, "curve", -100, 100, 0))
     end
     if not special then
       changed, g.freqSkew = reaper.ImGui_SliderInt(ctx, "Freq skew##gen_freqskew", g.freqSkew, -100, 100, "%d")
-      acc(changed); acc(tickReset(ctx, g, "freqSkew", -100, 100, 0))
+      acc(changed); acc(common.tickReset(ctx, g, "freqSkew", -100, 100, 0))
     end
     changed, g.tilt = reaper.ImGui_SliderInt(ctx, "Tilt##gen_tilt", g.tilt, -100, 100, "%d")
-    acc(changed); acc(tickReset(ctx, g, "tilt", -100, 100, 0))
+    acc(changed); acc(common.tickReset(ctx, g, "tilt", -100, 100, 0))
     -- Swing for periodic shapes EXCEPT triangle, whose Attack already controls peak position (Swing
     -- there would just duplicate it). Custom honors Swing via the generic SSS path.
     if not special and sid ~= "triangle" then
       changed, g.swing = reaper.ImGui_SliderDouble(ctx, "Swing##gen_swing", g.swing, -1.0, 1.0, "%.2f")
-      acc(changed); acc(tickReset(ctx, g, "swing", -1.0, 1.0, 0.0))
+      acc(changed); acc(common.tickReset(ctx, g, "swing", -1.0, 1.0, 0.0))
     end
     -- Steps quantizes the wave into N flat levels (a staircase). Meaningless on Square (already 2
     -- levels) and on the special generators. Custom is quantized via the generic SSS path.
     if not special and sid ~= "square" then
       changed, g.steps = reaper.ImGui_SliderInt(ctx, "Steps##gen_steps", g.steps, 0, 32, g.steps < 2 and "off" or "%d")
-      acc(changed); acc(tickReset(ctx, g, "steps", 0, 32, 0))
+      acc(changed); acc(common.tickReset(ctx, g, "steps", 0, 32, 0))
     end
     -- Smooth rounds the shape toward a sine. Meaningless on Sine (already a sine) and the specials.
     -- Custom is smoothed (blended toward sine) via the generic SSS path.
     if not special and sid ~= "sine" then
       changed, g.smooth = reaper.ImGui_SliderInt(ctx, "Smooth##gen_smooth", g.smooth, 0, 100, "%d")
-      acc(changed); acc(tickReset(ctx, g, "smooth", 0, 100, 0))
+      acc(changed); acc(common.tickReset(ctx, g, "smooth", 0, 100, 0))
     end
   end
 
@@ -873,7 +811,7 @@ function M.draw(ctx, state, detected)
   local tgtKind = detected and detected.target
   if tgtKind ~= "cc" and tgtKind ~= "envelope" and tgtKind ~= "ai" then
     reaper.ImGui_TextColored(ctx, COLOR_HINT, "Select a MIDI CC lane, a track envelope, or an automation item.")
-  elseif g.scope == SCOPE_TIMESEL and not detected.hasTimeSel then
+  elseif g.scope == common.SCOPE_TIMESEL and not detected.hasTimeSel then
     reaper.ImGui_TextColored(ctx, COLOR_HINT, "Make a time selection (or switch Scope to Entire item).")
   elseif currentShapeId(g) == "none" then
     -- v2.1 U1: the default None shape is a no-op; prompt the user to choose a shape.
@@ -1007,7 +945,7 @@ function M.run(state, detected, g)
     fail("Select a MIDI CC lane, a track envelope, or an automation item")
     return
   end
-  if (g.scope == SCOPE_TIMESEL or tk == "envelope") and not detected.hasTimeSel then
+  if (g.scope == common.SCOPE_TIMESEL or tk == "envelope") and not detected.hasTimeSel then
     fail("Make a time selection") return
   end
   if tk == "cc" and (g.ccNum < 0 or g.ccNum > 127) then fail("Set a valid CC# (0-127)") return end
