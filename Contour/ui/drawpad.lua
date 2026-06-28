@@ -63,8 +63,9 @@ function M.draw(ctx, points, opts)
     end
   end
 
-  -- begin gestures on mouse-down
-  if active and reaper.ImGui_IsMouseClicked(ctx, 0) then
+  -- begin gestures on mouse-down. Skip the SECOND click of a double-click so double-clicking empty
+  -- space doesn't drop a stray extra point (the double-click is handled by the delete branch below).
+  if active and reaper.ImGui_IsMouseClicked(ctx, 0) and not reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
     if hotPt then drag.idx, drag.seg = hotPt, nil
     else
       -- segment under cursor? (between two points, away from a point) -> bend; else add a point
