@@ -86,6 +86,43 @@ h.test("thinCurve fits a fast-start arc (shape 3) and fast-end arc (shape 4)", f
   h.eq(#b, 2); h.eq(b[1].shape, 4)
 end)
 
+-- Bezier rescue: asymmetric bulges the fixed eases can't match are captured as one shape-5 segment
+-- with a fitted tension, rather than splitting into more points. Fixed shapes still win when they fit.
+local cs = require("core.customshape")
+local function bezEase(T) return function(x) return cs.bezierFrac(x, T) end end
+
+h.test("thinCurve rescues an asymmetric bezier bulge as one shape-5 segment", function()
+  local out = reduce.thinCurve(arc(21, bezEase(0.6)), 0.01, { vmin = 0, vmax = 1 })
+  h.eq(#out, 2, "asymmetric bulge collapses to 2 points")
+  h.eq(out[1].shape, 5, "tagged bezier")
+  h.almost(out[1].tension, 0.6, 0.03, "recovered tension ~0.6")
+end)
+
+h.test("thinCurve recovers negative bezier tension too", function()
+  local out = reduce.thinCurve(arc(21, bezEase(-0.7)), 0.01, { vmin = 0, vmax = 1 })
+  h.eq(#out, 2); h.eq(out[1].shape, 5)
+  h.almost(out[1].tension, -0.7, 0.03)
+end)
+
+h.test("thinCurve prefers a fixed shape over bezier when one fits (no spurious bezier)", function()
+  local out = reduce.thinCurve(arc(21, slowEase), 0.01, { vmin = 0, vmax = 1 })
+  h.eq(out[1].shape, 2, "the slow-start/end arc stays shape 2")
+  h.almost(out[1].tension, 0, 1e-9, "fixed shapes carry tension 0")
+end)
+
+h.test("thinCurve still splits a non-fittable (non-monotone) wiggle", function()
+  local vals = { 0, 0.85, 0.15, 0.95, 0.05, 1 }
+  local pts = {}
+  for i, v in ipairs(vals) do pts[#pts + 1] = { time = (i - 1) / (#vals - 1), value = v } end
+  h.truthy(#reduce.thinCurve(pts, 0.02, { vmin = 0, vmax = 1 }) > 2, "no single bezier fits a W")
+end)
+
+h.test("thinCurve bezier rescue carries through envConvention (shape 5 unchanged)", function()
+  local out = reduce.thinCurve(arc(21, bezEase(0.6)), 0.01, { vmin = 0, vmax = 1 }, { envConvention = true })
+  h.eq(out[1].shape, 5, "bezier is shape 5 on both CC and envelope")
+  h.almost(out[1].tension, 0.6, 0.03)
+end)
+
 h.test("thinCurve keeps far fewer points than rdp on a curve", function()
   local a = arc(21, slowEase)
   h.truthy(#reduce.thinCurve(a, 0.01, { vmin = 0, vmax = 1 }) < #reduce.rdp(a, 0.01),
