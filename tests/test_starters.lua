@@ -12,14 +12,7 @@ local function evalCurve(pts, x)
     if x < b.x - 1e-9 or i == #pts - 1 then   -- half-open: at a breakpoint use the NEXT segment (so a
       local t = (b.x > a.x) and (x - a.x) / (b.x - a.x) or 0   -- step's post-jump value is seen, like shapes.value)
       if t < 0 then t = 0 elseif t > 1 then t = 1 end
-      local s, e = a.shape or 1, nil
-      if s == 5 then e = cs.bezierFrac(t, a.tension or 0)
-      elseif s == 2 then e = (1 - math.cos(math.pi * t)) / 2
-      elseif s == 3 then e = math.sin(math.pi * t / 2)
-      elseif s == 4 then e = 1 - math.cos(math.pi * t / 2)
-      elseif s == 0 then e = 0   -- step: hold the start value
-      else e = t end
-      return a.y + (b.y - a.y) * e
+      return a.y + (b.y - a.y) * cs.segEase(a.shape or 1, t, a.tension or 0)
     end
   end
   return pts[#pts].y

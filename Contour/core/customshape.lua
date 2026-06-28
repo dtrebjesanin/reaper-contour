@@ -69,6 +69,17 @@ function M.bezierXY(u, tension)
   return cubic(0, p1x, p2x, 1, u), (1 - cubic(1, p1y, p2y, -1, u)) * 0.5
 end
 
+-- Value FRACTION for a single segment: shape 5 -> bezierFrac; 2/3/4 -> sine eases; 0 -> step hold; else linear.
+-- t is the intra-segment fraction in [0,1]; tension is used only by shape 5.
+function M.segEase(shape, t, tension)
+  if shape == 5 then return M.bezierFrac(t, tension)
+  elseif shape == 2 then return (1 - cos(pi * t)) / 2
+  elseif shape == 3 then return sin(pi * t / 2)
+  elseif shape == 4 then return 1 - cos(pi * t / 2)
+  elseif shape == 0 then return 0
+  else return t end
+end
+
 -- Value of the custom one-cycle curve at intra-cycle position t in [0,1) (wraps). Evaluates the
 -- piecewise CC eases (bezier via bezierFrac; sine eases 2/3/4; step 0; linear). Lets the generic
 -- sampler quantize / smooth / swing a custom shape just like the built-in shapes (Phase 2).
@@ -83,14 +94,7 @@ function M.valueAt(points, t)
       local w = b.x - a.x
       local tt = (w > 1e-12) and (t - a.x) / w or 0
       if tt < 0 then tt = 0 elseif tt > 1 then tt = 1 end
-      local s, e = a.shape or 1, nil
-      if s == 5 then e = M.bezierFrac(tt, a.tension or 0)
-      elseif s == 2 then e = (1 - cos(pi * tt)) / 2
-      elseif s == 3 then e = sin(pi * tt / 2)
-      elseif s == 4 then e = 1 - cos(pi * tt / 2)
-      elseif s == 0 then e = 0
-      else e = tt end
-      return a.y + (b.y - a.y) * e
+      return a.y + (b.y - a.y) * M.segEase(a.shape or 1, tt, a.tension or 0)
     end
   end
   return points[n].y

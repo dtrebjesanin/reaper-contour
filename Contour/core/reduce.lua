@@ -59,12 +59,11 @@ end
 -- only the two endpoints are kept and the first is tagged with that shape. Value = v0 + (v1-v0)*e(x).
 -- The eases match REAPER's rendering: slow start/end is the native-sine arc; fast start/end are the
 -- quarter-sine eases that compose the native parametric sine (both proven by test_native_match.lua).
-local cos, sin, pi = math.cos, math.sin, math.pi
 local CANDIDATES = {
-  { shape = 1, ease = function(x) return x end },                       -- linear
-  { shape = 2, ease = function(x) return (1 - cos(pi * x)) / 2 end },   -- slow start/end (S-curve)
-  { shape = 3, ease = function(x) return sin(pi * x / 2) end },         -- fast start (ease-out)
-  { shape = 4, ease = function(x) return 1 - cos(pi * x / 2) end },     -- fast end  (ease-in)
+  { shape = 1, ease = function(x) return customshape.segEase(1, x, 0) end },   -- linear
+  { shape = 2, ease = function(x) return customshape.segEase(2, x, 0) end },   -- slow start/end (S-curve)
+  { shape = 3, ease = function(x) return customshape.segEase(3, x, 0) end },   -- fast start (ease-out)
+  { shape = 4, ease = function(x) return customshape.segEase(4, x, 0) end },   -- fast end  (ease-in)
 }
 
 local function withShape(p, shape, tension)

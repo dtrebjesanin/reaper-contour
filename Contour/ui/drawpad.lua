@@ -32,12 +32,7 @@ end
 -- value-fraction per CC segment shape (caller does value = a.y + (b.y-a.y)*ease). Shape 5 = REAPER's
 -- exact bezier (customshape.bezierFrac); 2/3/4 are the slow/fast sine eases (Phase-3 stamp palette).
 local function ease(shape, t, ten)
-  if shape == 5 then return cs.bezierFrac(t, ten) end
-  if shape == 2 then return (1 - math.cos(math.pi * t)) / 2 end
-  if shape == 3 then return math.sin(math.pi * t / 2) end
-  if shape == 4 then return 1 - math.cos(math.pi * t / 2) end
-  if shape == 0 then return 0 end   -- step: hold the start value until the jump at the next point
-  return t
+  return cs.segEase(shape, t, ten)
 end
 
 -- Index of the segment whose drawn CURVE is under the cursor, or nil. Curve-aware: the pad is a
