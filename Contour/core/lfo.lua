@@ -500,7 +500,10 @@ local function generateCustom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSk
     end
   end
   samp[#samp + 1] = { rel = 0, y = valAtX(-phase), shp = cp[1].shape or 1, ten = cp[1].tension or 0 }
-  samp[#samp + 1] = { rel = 1, y = valAtX(N - phase), shp = 1, ten = 0 }
+  -- rel=1 is the span END: at an exact cycle boundary use the cycle-END value (cp[#cp].y), not the
+  -- wrapped cycle-START that valAtX would return.
+  local function valEnd(x) local fx = x - floor(x); if fx < 1e-12 then return cp[#cp].y end return valAtX(x) end
+  samp[#samp + 1] = { rel = 1, y = valEnd(N - phase), shp = 1, ten = 0 }
   table.sort(samp, function(a, b) return a.rel < b.rel end)
   local pts, lastRel = {}, nil
   for _, s in ipairs(samp) do

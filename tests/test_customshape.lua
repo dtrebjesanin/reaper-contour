@@ -82,4 +82,12 @@ h.test("custom degenerate (no points) is a safe flat line", function()
   h.almost(pts[1].time, 0, 1e-9); h.almost(pts[#pts].time, 2, 1e-9)
 end)
 
+h.test("custom discontinuous shape ends on the cycle-END value", function()
+  local pts = lfo.generate({ t0 = 0, t1 = 3 }, { shape = "custom",
+    rate = { mode = "free", cycles = 3 }, amplitude = 1, baseline = 0,
+    customPoints = { { x = 0, y = -1, shape = 1, tension = 0 }, { x = 1, y = 1, shape = 1, tension = 0 } } })
+  h.almost(pts[#pts].time, 3, 1e-9)
+  h.almost(pts[#pts].value, 1, 1e-6, "a rising-ramp custom must end at +1 (cycle end), not -1")
+end)
+
 h.run()

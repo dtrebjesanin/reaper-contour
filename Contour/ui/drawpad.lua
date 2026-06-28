@@ -4,7 +4,7 @@
 -- Pure-ish: no ExtState; the caller owns persistence. Guarded so it no-ops if DrawList APIs are absent.
 local M = {}
 local cs = require("core.customshape")
-local floor, abs, min, max = math.floor, math.abs, math.min, math.max
+local abs, min, max = math.abs, math.min, math.max
 
 local GRID = 0x3A434BFF
 local AXIS = 0x55636EFF

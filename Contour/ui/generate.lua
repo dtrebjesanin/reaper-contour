@@ -8,8 +8,8 @@
 --   - per-LFO-shape density + MIDI CC shape selection is decided here.
 -- core/lfo.lua + core/shapes.lua remain pure (zero reaper.*).
 --
--- The drawn preview-curve UI, presets, fades/quantize/randomness/smooth controls are a
--- LATER slice and deliberately NOT built here.
+-- The Custom draw pad + preset store, fades/quantize/randomness/smooth controls are all
+-- implemented here alongside the core LFO controls.
 local M = {}
 
 local lfo         = require("core.lfo")
@@ -633,12 +633,17 @@ function M.draw(ctx, state, detected)
     do
       local pr = c.store[c.idx]
       local rv, nm = reaper.ImGui_InputText(ctx, "Name##cust_name", pr.name or "")
-      if rv then pr.name = nm; saveCustom(c) end
+      if rv then pr.name = nm end
+      if reaper.ImGui_IsItemDeactivatedAfterEdit and reaper.ImGui_IsItemDeactivatedAfterEdit(ctx) then saveCustom(c) end
     end
     -- the pad
     local padW = reaper.ImGui_GetContentRegionAvail and select(1, reaper.ImGui_GetContentRegionAvail(ctx)) or 360
     local padChanged = drawpad.draw(ctx, c.store[c.idx].points, { width = padW, height = 140, id = "##cust_pad" })
-    if padChanged then c.store[c.idx].points = customshape.clampPoints(c.store[c.idx].points); saveCustom(c); acc(true) end
+    if padChanged then c._dirty = true; acc(true) end                    -- live re-apply each drag frame
+    if c._dirty and not reaper.ImGui_IsMouseDown(ctx, 0) then            -- persist once the gesture ends
+      c.store[c.idx].points = customshape.clampPoints(c.store[c.idx].points)
+      saveCustom(c); c._dirty = false
+    end
   end
 
   -- == Scope == (CC + Automation Item: write across the Time selection OR the Entire item.
