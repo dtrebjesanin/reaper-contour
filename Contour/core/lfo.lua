@@ -103,9 +103,9 @@ end
 --     leftHalf  = baseHalf*(1 - max(0,  s_a))
 --     rightHalf = baseHalf*(1 - max(0, -s_a))
 --     half(rel) = leftHalf + (rightHalf-leftHalf)*rel
---   TILT — two independent terms (both 0 by default):
---     tiltOffset(rel)   = tiltOffset * rel              (REAPER's native LEFT-anchored drift)
---     seesaw(rel)       = seesawOffset * (rel - 0.5)    (bipolar center-pivot "tilt left/right", UI)
+--   TILT — two independent sliders (both 0 by default):
+--     tiltOffset(rel)   = tiltOffset  * rel             (LEFT-anchored: right end moves; REAPER native)
+--     tiltOffsetR(rel)  = tiltOffsetR * (1 - rel)       (RIGHT-anchored: left end moves)
 --   FREQ SKEW (s_f in [-1,1], global phase time-warp) — EXACT QUADRATIC, verified to the
 --   integer from native dumps (CC18 +50, CC19 -50, D4 +100, D5 -100):
 --     rel(prog) = prog + s_f*prog*(1-prog)          (phase-progress prog -> time-fraction rel)
@@ -113,7 +113,7 @@ end
 --   (bunch toward the left). prog(0)=rel 0, prog(1)=rel 1: total cycle count is preserved.
 --   (Earlier builds used a power law e=1-0.5|s_f|; it only coincided with native at ±100 and
 --   was wrong at intermediate values — CC18's +50 peak is at exactly rel 0.3438, the quadratic.)
---   value(rel) = center + half(rel)*shape(phase(rel)) + tiltOffset*rel + seesawOffset*(rel-0.5)
+--   value(rel) = center + half(rel)*shape(phase(rel)) + tiltOffset*rel + tiltOffsetR*(1-rel)
 -- Core does NOT clamp or floor: the Reaper write layer clamps to [vmin,vmax] and
 -- FLOORs (native truncates). Headless tests floor+clamp to compare to the dumps.
 
@@ -175,14 +175,15 @@ end
 -- modelValue: the shared value model used by every emitter/sampler. depth = fade envelope at rel,
 -- half = amp-skew ramp at rel; the waveform sample sv rides half*depth. TWO independent tilt terms,
 -- both fade-independent and both 0 by default:
---   tiltOffset*rel             = REAPER's native LEFT-anchored tilt drift (byte-matched dumps).
---   seesawOffset*(rel-0.5)     = bipolar center-pivot "tilt left / tilt right" (the UI's Tilt slider):
---                                left edge -seesaw/2, center fixed, right edge +seesaw/2.
+--   tiltOffset*rel              = LEFT-anchored tilt (0 at the left edge, full at the right): the RIGHT
+--                                 end moves. This is REAPER's native tilt (byte-matched dumps).
+--   tiltOffsetR*(1-rel)         = RIGHT-anchored tilt (0 at the right edge, full at the left): the LEFT
+--                                 end moves.
 -- (Callers that quantize sv do so BEFORE calling this — pass the already-quantized sv.)
 local function modelValue(baseV, amp, ampSkew, tiltOffset, rel, sv, p)
   local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
   local half = ampHalf(amp, ampSkew, rel)
-  return baseV + half * sv * depth + tiltOffset * rel + (p.seesawOffset or 0) * (rel - 0.5)
+  return baseV + half * sv * depth + tiltOffset * rel + (p.tiltOffsetR or 0) * (1 - rel)
 end
 
 -- ===========================================================================

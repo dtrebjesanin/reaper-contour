@@ -296,34 +296,37 @@ h.test("generate tilt<0 lowers right", function()
   h.truthy(downPts[#downPts].value < noTilt[#noTilt].value, "right side must be lower")
 end)
 
--- BIPOLAR SEE-SAW tilt (the UI "Tilt" slider, via seesawOffset): pivots around the center (rel=0.5) so
--- the left edge drops and the right rises by the SAME amount (+ tilt); center unchanged. seesaw=0 is
--- identity, so native-match (which never sets seesawOffset) is unaffected.
-h.test("generate seesaw>0 tilts right (left down, right up, equal+opposite)", function()
+-- RIGHT-ANCHORED tilt (Tilt R, via tiltOffsetR): 0 at the right edge, full at the left -> the LEFT end
+-- moves while the right stays put. tiltOffsetR=0 is identity, so native-match never sees it.
+h.test("generate tiltR>0 anchors right and raises left", function()
   local base = { shape = "sine", rate = { mode = "free", cycles = 4 }, amplitude = 50, baseline = 64, density = 8 }
   local none = lfo.generate({ t0 = 0, t1 = 2 }, base)
-  local s = {}; for k, v in pairs(base) do s[k] = v end; s.seesawOffset = 25   -- edges +/- 12.5
-  local sp = lfo.generate({ t0 = 0, t1 = 2 }, s)
-  h.almost(sp[1].value - none[1].value, -12.5, 1e-6, "left edge drops half")
-  h.almost(sp[#sp].value - none[#none].value, 12.5, 1e-6, "right edge rises half")
+  local r = {}; for k, v in pairs(base) do r[k] = v end; r.tiltOffsetR = 25
+  local rp = lfo.generate({ t0 = 0, t1 = 2 }, r)
+  h.almost(rp[1].value - none[1].value, 25, 1e-6, "left edge raised by full offset")
+  h.almost(rp[#rp].value, none[#none].value, 1e-9, "right edge anchored (unchanged)")
 end)
 
-h.test("generate seesaw<0 tilts left (mirror image)", function()
+h.test("generate tiltR<0 lowers left, right anchored", function()
   local base = { shape = "sine", rate = { mode = "free", cycles = 4 }, amplitude = 50, baseline = 64, density = 8 }
   local none = lfo.generate({ t0 = 0, t1 = 2 }, base)
-  local s = {}; for k, v in pairs(base) do s[k] = v end; s.seesawOffset = -25
-  local sp = lfo.generate({ t0 = 0, t1 = 2 }, s)
-  h.almost(sp[1].value - none[1].value, 12.5, 1e-6, "left edge rises")
-  h.almost(sp[#sp].value - none[#none].value, -12.5, 1e-6, "right edge drops")
+  local r = {}; for k, v in pairs(base) do r[k] = v end; r.tiltOffsetR = -25
+  local rp = lfo.generate({ t0 = 0, t1 = 2 }, r)
+  h.almost(rp[1].value - none[1].value, -25, 1e-6, "left edge lowered")
+  h.almost(rp[#rp].value, none[#none].value, 1e-9, "right edge anchored")
 end)
 
-h.test("generate seesaw=0 is identical to no seesaw", function()
-  local base = { shape = "sine", rate = { mode = "free", cycles = 3 }, amplitude = 40, baseline = 64, density = 8 }
-  local a = lfo.generate({ t0 = 0, t1 = 2 }, base)
-  local b0 = {}; for k, v in pairs(base) do b0[k] = v end; b0.seesawOffset = 0
-  local b = lfo.generate({ t0 = 0, t1 = 2 }, b0)
-  h.eq(#a, #b)
-  for i = 1, #a do h.almost(a[i].value, b[i].value, 1e-12) end
+-- The two tilts are independent and combine: Tilt L (left-anchored) is full at the RIGHT edge, Tilt R
+-- (right-anchored) is full at the LEFT edge; each edge sees only its own slider.
+h.test("generate Tilt L and Tilt R combine independently", function()
+  local base = { shape = "sine", rate = { mode = "free", cycles = 4 }, amplitude = 50, baseline = 64, density = 8 }
+  local none = lfo.generate({ t0 = 0, t1 = 2 }, base)
+  local both = {}; for k, v in pairs(base) do both[k] = v end
+  both.tiltOffset = 20    -- Tilt L: +20 at the right edge (rel=1), 0 at the left
+  both.tiltOffsetR = 10   -- Tilt R: +10 at the left edge (rel=0), 0 at the right
+  local bp = lfo.generate({ t0 = 0, t1 = 2 }, both)
+  h.almost(bp[1].value - none[1].value, 10, 1e-6, "left edge: only Tilt R")
+  h.almost(bp[#bp].value - none[#none].value, 20, 1e-6, "right edge: only Tilt L")
 end)
 
 -- NATIVE MATCH: a default square (phase 0, pw 0.5) starts LOW at the cycle start and steps
