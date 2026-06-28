@@ -58,6 +58,17 @@ h.test("bezierFrac matches REAPER's bezier (endpoints, neutral, sign, schwa anch
   h.almost(cs.bezierFrac(0.5, -0.5) + cs.bezierFrac(0.5, 0.5), 1, 1e-6, "symmetric about T at the midpoint")
 end)
 
+h.test("bezierXY parametric form agrees with bezierFrac and has exact endpoints", function()
+  for _, T in ipairs({ -0.8, -0.3, 0.3, 0.8 }) do
+    for i = 1, 9 do
+      local xf, yf = cs.bezierXY(i / 10, T)
+      h.almost(cs.bezierFrac(xf, T), yf, 2e-3, "parametric vs x-inverted, T=" .. T)
+    end
+  end
+  local x0f, y0f = cs.bezierXY(0, 0.5); h.almost(x0f, 0, 1e-9); h.almost(y0f, 0, 1e-9)
+  local x1f, y1f = cs.bezierXY(1, 0.5); h.almost(x1f, 1, 1e-9); h.almost(y1f, 1, 1e-9)
+end)
+
 h.test("bezierFrac is monotonic increasing in t", function()
   for _, T in ipairs({ -0.8, -0.3, 0.3, 0.8 }) do
     local prev = -1

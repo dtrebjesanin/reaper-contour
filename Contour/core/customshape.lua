@@ -61,6 +61,14 @@ function M.bezierFrac(t, tension)
   return (1 - cubic(1, p1y, p2y, -1, u)) * 0.5            -- normalized y [+1..-1] -> fraction [0..1]
 end
 
+-- Parametric point on the same bezier at curve parameter u in [0,1]: returns (xFrac, yFrac), both in
+-- [0,1]. Stepping u (rather than x) tessellates densely where the curve bends, so the near-vertical
+-- extremes draw smoothly instead of faceting. This is how REAPER itself draws the curve.
+function M.bezierXY(u, tension)
+  local p1x, p1y, p2x, p2y = bezCP(tension or 0)
+  return cubic(0, p1x, p2x, 1, u), (1 - cubic(1, p1y, p2y, -1, u)) * 0.5
+end
+
 local ESC = { ["%"] = "%25", ["|"] = "%7C", ["~"] = "%7E", [";"] = "%3B", [","] = "%2C" }
 local function esc(s) return (tostring(s):gsub("[%%|~;,]", ESC)) end
 local function unesc(s) return (tostring(s):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)) end

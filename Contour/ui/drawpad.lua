@@ -142,19 +142,29 @@ function M.draw(ctx, points, opts)
   end
   if not reaper.ImGui_IsMouseDown(ctx, 0) then drag.idx, drag.seg = nil, nil end
 
-  -- draw the curve (sample each segment by its ease)
+  -- draw the curve. Shape 1 = straight; shape 5 (bezier) is tessellated by the bezier PARAMETER u
+  -- (cs.bezierXY) so the steep extremes stay smooth instead of notching; 2/3/4 are y=ease(x).
   for i = 1, #points - 1 do
     local a, b = points[i], points[i + 1]
     local ax, ay = toScreen(a.x, a.y, x0, y0, w, hgt)
     local bx, by = toScreen(b.x, b.y, x0, y0, w, hgt)
-    local steps = (a.shape == 1) and 1 or 16
-    local px, py = ax, ay
-    for s = 1, steps do
-      local t = s / steps
-      local yv = a.y + (b.y - a.y) * ease(a.shape or 1, t, a.tension or 0)
-      local qx, qy = toScreen(a.x + (b.x - a.x) * t, yv, x0, y0, w, hgt)
-      reaper.ImGui_DrawList_AddLine(dl, px, py, qx, qy, CURVE, 2)
-      px, py = qx, qy
+    local sh = a.shape or 1
+    if sh == 1 then
+      reaper.ImGui_DrawList_AddLine(dl, ax, ay, bx, by, CURVE, 2)
+    else
+      local px, py = ax, ay
+      for s = 1, 32 do
+        local qx, qy
+        if sh == 5 then
+          local xf, yf = cs.bezierXY(s / 32, a.tension or 0)
+          qx, qy = toScreen(a.x + (b.x - a.x) * xf, a.y + (b.y - a.y) * yf, x0, y0, w, hgt)
+        else
+          local t = s / 32
+          qx, qy = toScreen(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * ease(sh, t, a.tension or 0), x0, y0, w, hgt)
+        end
+        reaper.ImGui_DrawList_AddLine(dl, px, py, qx, qy, CURVE, 2)
+        px, py = qx, qy
+      end
     end
   end
   -- draw point handles
