@@ -11,6 +11,14 @@ A **Custom** LFO shape the user draws in an in-panel pad: place points, drag the
 between them (bezier). The drawn curve is ONE cycle that Generate repeats at the Rate, just like the
 built-in shapes. Multiple named custom shapes are saved as **presets** and persist across sessions.
 
+## Placement
+
+Custom lives **under Generate as a shape** — an entry in the Generate `SHAPES` dropdown, NOT a new
+top-level tab. Selecting it reveals the draw pad + preset controls (hidden for every other shape) and
+reuses ALL of Generate's existing plumbing: target detection (envelope / automation item / MIDI CC),
+Rate, Amplitude, Baseline, Fade, live preview, and the write path. A separate section was rejected
+because it would duplicate all of that.
+
 ## Phasing
 
 - **Phase 1 (this spec):** freehand draw pad (add/move/delete points, bendable segments) + preset
