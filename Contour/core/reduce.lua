@@ -153,6 +153,9 @@ end
 function M.thinCurve(points, amount, valueRange, opts)
   local n = #points
   opts = opts or {}
+  -- CC convention: linear=1, square=0.  Envelope convention: linear=0, square=1.
+  -- Canonical rule is target.CC_TO_ENV_SHAPE (core/target.lua); test_shape_convention.lua
+  -- locks agreement between that table and this branch so the two never silently diverge.
   local linearShape = opts.envConvention and 0 or 1
   if n <= 2 then
     local out = {}

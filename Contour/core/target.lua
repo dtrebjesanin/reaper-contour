@@ -747,4 +747,8 @@ end
 
 M.CC = CC
 M.AI = AI
+-- Canonical CC<->envelope shape swap: CC 0=square/1=linear  <>  ENV 0=linear/1=square.
+-- Shapes 2-5 are identical in both conventions. Exposed so callers (e.g. tests) can
+-- assert the same rule without embedding it a second time.
+M.CC_TO_ENV_SHAPE = CC_TO_ENV_SHAPE
 return M
