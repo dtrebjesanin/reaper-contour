@@ -107,6 +107,4 @@ function M.randomAt(seed, index)
   return u * 2 - 1
 end
 
-M._clamp = clamp
-M._frac = frac
 return M
