@@ -33,14 +33,11 @@ local SHAPES = {
   { id = "parametric", label = "Parametric" },
   { id = "rectsine",   label = "Rectified sine" },
   { id = "sine2",      label = "Sine\xc2\xb2" },     -- "Sine²" (UTF-8 superscript two)
-  { id = "custom",     label = "Custom (draw)" },
   { id = "random",     label = "Random (S&H)" },
   { id = "drift",      label = "Drift" },
+  { id = "custom",     label = "Custom (draw)" },   -- last: a user-drawn shape, set apart from the presets
 }
 
--- Build the null-separated combo string for the shape selector.
-local SHAPE_ITEMS = ""
-for _, s in ipairs(SHAPES) do SHAPE_ITEMS = SHAPE_ITEMS .. s.label .. "\0" end
 
 -- Rate modes. Musical (native Length x Frequency) is the DEFAULT and mirrors REAPER's CC LFO.
 local RATE_MODES = { "Musical (Length x Freq)", "Free (cycles)", "Hz (absolute)" }
@@ -594,10 +591,18 @@ function M.draw(ctx, state, detected)
 
   -- == Shape ==
   do
-    -- Combo reports `changed` even when the user re-picks the current item; only treat it as
-    -- a real edit (and trigger a live write) when the index actually moved.
-    local changed, idx = reaper.ImGui_Combo(ctx, "Shape##gen_shape", g.shapeIdx, SHAPE_ITEMS, #SHAPE_ITEMS)
-    if changed and idx ~= g.shapeIdx then g.shapeIdx = idx; acc(true) end
+    -- Built from BeginCombo/Selectable (not ImGui_Combo) so that picking the CURRENT shape again
+    -- still counts as a trigger: a plain Combo only fires when the index moves, but the user wants
+    -- re-selecting the same shape to re-apply (e.g. to re-stamp after editing the target).
+    local cur = SHAPES[g.shapeIdx + 1] and SHAPES[g.shapeIdx + 1].label or "None"
+    if reaper.ImGui_BeginCombo(ctx, "Shape##gen_shape", cur) then
+      for i, s in ipairs(SHAPES) do
+        local sel = (g.shapeIdx == i - 1)
+        if reaper.ImGui_Selectable(ctx, s.label, sel) then g.shapeIdx = i - 1; acc(true) end
+        if sel and reaper.ImGui_SetItemDefaultFocus then reaper.ImGui_SetItemDefaultFocus(ctx) end
+      end
+      reaper.ImGui_EndCombo(ctx)
+    end
 
     -- Re-roll (v2.1 U2): only meaningful for the Random / S&H shape. Assigns a NEW
     -- seed so a fresh pattern generates. The seed stays STABLE while dragging other
