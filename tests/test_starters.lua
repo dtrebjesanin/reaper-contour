@@ -9,13 +9,15 @@ local cs = require("core.customshape")
 local function evalCurve(pts, x)
   for i = 1, #pts - 1 do
     local a, b = pts[i], pts[i + 1]
-    if x >= a.x - 1e-9 and x <= b.x + 1e-9 then
-      local t = (b.x > a.x) and (x - a.x) / (b.x - a.x) or 0
+    if x < b.x - 1e-9 or i == #pts - 1 then   -- half-open: at a breakpoint use the NEXT segment (so a
+      local t = (b.x > a.x) and (x - a.x) / (b.x - a.x) or 0   -- step's post-jump value is seen, like shapes.value)
+      if t < 0 then t = 0 elseif t > 1 then t = 1 end
       local s, e = a.shape or 1, nil
       if s == 5 then e = cs.bezierFrac(t, a.tension or 0)
       elseif s == 2 then e = (1 - math.cos(math.pi * t)) / 2
       elseif s == 3 then e = math.sin(math.pi * t / 2)
       elseif s == 4 then e = 1 - math.cos(math.pi * t / 2)
+      elseif s == 0 then e = 0   -- step: hold the start value
       else e = t end
       return a.y + (b.y - a.y) * e
     end
@@ -49,8 +51,8 @@ h.test("each starter reproduces the toolkit's OWN shape (matches shapes.value wi
   for _, s in ipairs(starters.list) do
     local pts = starters.points(s.id)
     local maxErr = 0
-    for i = 0, 256 do
-      local x = i / 256
+    for i = 0, 255 do                      -- [0,1): x=1 is the cycle-END value, but shapes.value wraps
+      local x = i / 256                    -- (frac(1)=0) so saw/square legitimately differ at the seam
       local e = math.abs(evalCurve(pts, x) - shapes.value(s.id, x))
       if e > maxErr then maxErr = e end
     end
@@ -62,6 +64,13 @@ h.test("sine starter is the -cos phase (starts at the trough, peaks mid-cycle)",
   local pts = starters.points("sine")
   h.almost(evalCurve(pts, 0), -1, 0.01, "sine starts at -1 (trough), like base.sine")
   h.almost(evalCurve(pts, 0.5), 1, 0.01, "sine peaks at mid-cycle")
+end)
+
+h.test("square starter ends at x=1 and is a step (low first half, high second)", function()
+  local pts = starters.points("square")
+  h.almost(pts[#pts].x, 1, 1e-9, "has a cycle-end anchor at x=1")
+  h.almost(evalCurve(pts, 0.25), -1, 0.01, "low in the first half")
+  h.almost(evalCurve(pts, 0.75), 1, 0.01, "high in the second half")
 end)
 
 h.run()

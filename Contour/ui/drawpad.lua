@@ -36,6 +36,7 @@ local function ease(shape, t, ten)
   if shape == 2 then return (1 - math.cos(math.pi * t)) / 2 end
   if shape == 3 then return math.sin(math.pi * t / 2) end
   if shape == 4 then return 1 - math.cos(math.pi * t / 2) end
+  if shape == 0 then return 0 end   -- step: hold the start value until the jump at the next point
   return t
 end
 
@@ -162,6 +163,9 @@ function M.draw(ctx, points, opts)
     local sh = a.shape or 1
     if sh == 1 then
       reaper.ImGui_DrawList_AddLine(dl, ax, ay, bx, by, CURVE, 2)
+    elseif sh == 0 then                                          -- step: hold at a.y, then jump at b.x
+      reaper.ImGui_DrawList_AddLine(dl, ax, ay, bx, ay, CURVE, 2)
+      reaper.ImGui_DrawList_AddLine(dl, bx, ay, bx, by, CURVE, 2)
     else
       local px, py = ax, ay
       for s = 1, 32 do
