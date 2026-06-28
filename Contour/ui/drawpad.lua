@@ -5,7 +5,7 @@
 -- model) so the pad matches the rendered envelope/CC. Pure-ish: no ExtState; caller owns persistence.
 local M = {}
 local cs = require("core.customshape")
-local abs, min, max = math.abs, math.min, math.max
+local abs, min, max, floor = math.abs, math.min, math.max, math.floor
 
 local GRID = 0x3A434BFF
 local AXIS = 0x55636EFF
@@ -22,6 +22,11 @@ local function toData(sx, sy, x0, y0, w, hgt)
   local x = (w > 0) and (sx - x0) / w or 0
   local y = (hgt > 0) and (1 - (sy - y0) / hgt) * 2 - 1 or 0
   return max(0, min(1, x)), max(-1, min(1, y))
+end
+-- snap a value to the nearest of `divs` grid lines spanning [lo, hi]
+local function snapTo(v, lo, hi, divs)
+  if divs < 1 then return v end
+  return lo + floor((v - lo) / (hi - lo) * divs + 0.5) / divs * (hi - lo)
 end
 
 -- value-fraction per CC segment shape (caller does value = a.y + (b.y-a.y)*ease). Shape 5 = REAPER's
@@ -60,6 +65,9 @@ function M.draw(ctx, points, opts)
   end
   local w = opts.width or 360
   local hgt = opts.height or 140
+  local gridX = max(1, floor(opts.gridX or 4))   -- vertical divisions (time)
+  local gridY = max(1, floor(opts.gridY or 2))   -- horizontal divisions (value)
+  local snap = opts.snap and true or false       -- snap added/dragged points to grid intersections
   local x0, y0 = reaper.ImGui_GetCursorScreenPos(ctx)
   reaper.ImGui_InvisibleButton(ctx, opts.id or "##drawpad", w, hgt)
   local hovered = reaper.ImGui_IsItemHovered(ctx)
@@ -68,9 +76,10 @@ function M.draw(ctx, points, opts)
   local dl = reaper.ImGui_GetWindowDrawList(ctx)
   local changed = false
 
-  -- background + grid
+  -- background + grid (gridX vertical / gridY horizontal divisions; y=0 center drawn last, emphasized)
   reaper.ImGui_DrawList_AddRectFilled(dl, x0, y0, x0 + w, y0 + hgt, BG, 4)
-  for i = 0, 4 do local gx = x0 + i / 4 * w; reaper.ImGui_DrawList_AddLine(dl, gx, y0, gx, y0 + hgt, GRID, 1) end
+  for i = 0, gridX do local gx = x0 + i / gridX * w; reaper.ImGui_DrawList_AddLine(dl, gx, y0, gx, y0 + hgt, GRID, 1) end
+  for j = 0, gridY do local gy = y0 + j / gridY * hgt; reaper.ImGui_DrawList_AddLine(dl, x0, gy, x0 + w, gy, GRID, 1) end
   reaper.ImGui_DrawList_AddLine(dl, x0, y0 + hgt / 2, x0 + w, y0 + hgt / 2, AXIS, 1)   -- center (y=0)
 
   -- pointer hit-test (nearest point)
@@ -102,6 +111,7 @@ function M.draw(ctx, points, opts)
     elseif alt and hotSeg then drag.idx, drag.seg = nil, hotSeg      -- Alt+drag a segment -> bend it
     else
       local nx, ny = toData(mx, my, x0, y0, w, hgt)                  -- plain click -> add a point
+      if snap then nx = snapTo(nx, 0, 1, gridX); ny = snapTo(ny, -1, 1, gridY) end
       points[#points + 1] = { x = nx, y = ny, shape = 1, tension = 0 }
       local clamped = cs.clampPoints(points)
       for k = #points, 1, -1 do points[k] = nil end
@@ -122,6 +132,7 @@ function M.draw(ctx, points, opts)
       local p = points[drag.idx]
       if p then
         local nx, ny = toData(mx, my, x0, y0, w, hgt)
+        if snap then nx = snapTo(nx, 0, 1, gridX); ny = snapTo(ny, -1, 1, gridY) end
         if drag.idx == 1 then nx = 0 elseif drag.idx == #points then nx = 1
         else nx = max(points[drag.idx - 1].x + 1e-3, min(points[drag.idx + 1].x - 1e-3, nx)) end
         p.x, p.y = nx, ny; changed = true

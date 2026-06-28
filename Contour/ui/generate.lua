@@ -279,11 +279,15 @@ local function loadCustom()
   for _, pr in ipairs(store) do pr.points = customshape.clampPoints(pr.points) end
   local idx = tonumber(reaper.GetExtState("Contour", "customIdx") or "") or 1
   if idx < 1 or idx > #store then idx = 1 end
-  return { store = store, idx = idx }
+  local gx, gy, sn = (reaper.GetExtState("Contour", "customGrid") or ""):match("^(%d+),(%d+),(%d)")
+  local gridX = math.max(1, math.min(64, tonumber(gx) or 4))   -- pad grid divisions (time)
+  local gridY = math.max(1, math.min(64, tonumber(gy) or 2))   -- pad grid divisions (value)
+  return { store = store, idx = idx, gridX = gridX, gridY = gridY, snap = sn == "1" }
 end
 local function saveCustom(c)
   reaper.SetExtState("Contour", "customPresets", customshape.encode(c.store), true)
   reaper.SetExtState("Contour", "customIdx", tostring(c.idx), true)
+  reaper.SetExtState("Contour", "customGrid", string.format("%d,%d,%d", c.gridX or 4, c.gridY or 2, c.snap and 1 or 0), true)
 end
 local function activePoints(g)
   if not g.custom then g.custom = loadCustom() end
@@ -641,9 +645,23 @@ function M.draw(ctx, state, detected)
       if rv then pr.name = nm end
       if reaper.ImGui_IsItemDeactivatedAfterEdit and reaper.ImGui_IsItemDeactivatedAfterEdit(ctx) then saveCustom(c) end
     end
+    -- grid density + snap (pad editing aids; they don't change the generated curve, so no re-apply)
+    do
+      reaper.ImGui_SetNextItemWidth(ctx, 86)
+      local cgx, gx = reaper.ImGui_SliderInt(ctx, "Grid X##cust_gx", c.gridX or 4, 1, 32)
+      if cgx then c.gridX = gx; saveCustom(c) end
+      reaper.ImGui_SameLine(ctx)
+      reaper.ImGui_SetNextItemWidth(ctx, 86)
+      local cgy, gy = reaper.ImGui_SliderInt(ctx, "Grid Y##cust_gy", c.gridY or 2, 1, 32)
+      if cgy then c.gridY = gy; saveCustom(c) end
+      reaper.ImGui_SameLine(ctx)
+      local csn, sn = reaper.ImGui_Checkbox(ctx, "Snap##cust_snap", c.snap and true or false)
+      if csn then c.snap = sn; saveCustom(c) end
+    end
     -- the pad
     local padW = reaper.ImGui_GetContentRegionAvail and select(1, reaper.ImGui_GetContentRegionAvail(ctx)) or 360
-    local padChanged = drawpad.draw(ctx, c.store[c.idx].points, { width = padW, height = 140, id = "##cust_pad" })
+    local padChanged = drawpad.draw(ctx, c.store[c.idx].points,
+      { width = padW, height = 140, id = "##cust_pad", gridX = c.gridX, gridY = c.gridY, snap = c.snap })
     if padChanged then c._dirty = true; acc(true) end                    -- live re-apply each drag frame
     if c._dirty and not reaper.ImGui_IsMouseDown(ctx, 0) then            -- persist once the gesture ends
       c.store[c.idx].points = customshape.clampPoints(c.store[c.idx].points)
