@@ -186,4 +186,10 @@ function M.draw(ctx, points, opts)
   return changed
 end
 
+-- Test seams (underscore = not public): the pure coordinate + snap helpers, callable without ImGui so
+-- the data<->screen mapping and grid snapping can be unit-tested directly (tests/test_drawpad.lua).
+M._toScreen = toScreen   -- (px,py,x0,y0,w,hgt) -> sx,sy
+M._toData   = toData     -- (sx,sy,x0,y0,w,hgt) -> px,py  (clamped to [0,1]x[-1,1])
+M._snapTo   = snapTo     -- (v,lo,hi,divs) -> nearest grid value
+
 return M

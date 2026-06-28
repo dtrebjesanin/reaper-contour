@@ -116,8 +116,24 @@ The repository ships only the `Contour/` folder via ReaPack. The rest is develop
 - `dev/` — diagnostic scripts (coordinate dumps used while reverse-engineering REAPER's coordinate frames).
 - `tests/` — headless test suite. Run with a standalone Lua 5.4 from the repo root:
   ```
-  lua tests/test_<name>.lua      # e.g. lua tests/test_transform.lua
+  lua tests/test_<name>.lua      # one file, e.g. lua tests/test_transform.lua
+  for %f in (tests\test_*.lua) do lua "%f"   # all of them (cmd); use a shell loop on *nix
   ```
+  The suite has three layers, all runnable without REAPER except the last:
+  - **Engine/core** (`test_lfo`, `test_native_match`, `test_shapes`, `test_reduce`, `test_transform`,
+    `test_customshape`, `test_target`, `test_context`, …) — the pure logic; `test_native_match` byte-matches
+    REAPER's native CC LFO and must stay green.
+  - **UI render-smoke** (`test_render_smoke`) — installs a fake `reaper` (`tests/reaper_stub.lua`) and calls
+    every panel's `draw()` (and the Transform overlay's `start`→`frame`→one-shots) across a matrix of shapes,
+    modifiers, targets and ops, failing on any throw. This catches the nil-global / missing-function class of
+    bug that the engine tests can't (e.g. the overlay `bounds` crash).
+  - **Option-matrix sweep** (`test_generate_sweep`) — drives the real panel→engine param path
+    (`generate._buildParams` → `lfo.generate`) across every shape × modifier × value-range, asserting output
+    invariants. Automates the bulk of what used to be manual click-through.
+- `tests/reaper/contour_selftest.lua` — an **in-REAPER** integration self-test. Load it from REAPER's Action
+  list and Run it: it creates a scratch track, round-trips Contour's real write→read against the live REAPER
+  API for envelopes / MIDI CC / automation items, prints PASS/FAIL to the ReaScript console, then deletes the
+  scratch track. Use it to confirm the real API behaves as the headless stubs assume.
 - `docs/` — design specs and implementation plans.
 
 `index.xml` is generated automatically by `.github/workflows/deploy.yml` on every push to `master`; don't hand-edit it. To cut a release, bump `@version` and add a `@changelog` line in `Contour/contour.lua`, then commit and push.

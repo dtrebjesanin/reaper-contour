@@ -1058,4 +1058,13 @@ function M.run(state, detected, g)
   else ok(("Wrote %d envelope points"):format(count)) end
 end
 
+-- Test seams (underscore = not part of the panel's public API; same convention as the former _bounds).
+-- These let the headless tests exercise pure panel logic without ImGui: the NATIVE-%-slider -> VALUE-unit
+-- param assembly, and the Generate-preset capture/recall (incl. embedding/materializing a Custom drawing).
+M._buildParams     = buildParams        -- (g, spanT0, vmin, vmax) -> params, ccShape
+M._captureParams   = captureParams      -- (g) -> { DEFAULTS key -> value }
+M._applyParams     = applyParams        -- (g, params)
+M._genPresetPoints = genPresetPoints    -- (g) -> encoded custom-drawing string | nil
+M._recallGenPreset = recallGenPreset    -- (g, preset) — applies params + materializes embedded drawing
+
 return M
