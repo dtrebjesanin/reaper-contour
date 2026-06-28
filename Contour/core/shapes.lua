@@ -66,6 +66,7 @@ local function applySmooth(v, vSine, smooth)
   if smooth >= 1 then return vSine end
   return v * (1 - smooth) + vSine * smooth
 end
+M.applySmooth = applySmooth
 
 -- M.value returns the NORMALIZED per-cycle waveform sample in [-1,1] for an
 -- intra-cycle phase t in [0,1). It is PURELY the waveform shape.

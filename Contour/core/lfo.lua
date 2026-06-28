@@ -662,8 +662,7 @@ function M.generate(span, params)
     local sv
     if p.shape == "custom" then
       sv = customshape.valueAt(p.customPoints, tInCycle)   -- the drawn curve's value at this phase
-      local sm = p.smooth or 0; if sm > 1 then sm = 1 end   -- Smooth blends toward sine (same as shapes.value)
-      if sm > 0 then sv = sv * (1 - sm) + shapes.base.sine(tInCycle) * sm end
+      sv = shapes.applySmooth(sv, shapes.base.sine(tInCycle), p.smooth or 0)
     else
       sv = shapes.value(p.shape, tInCycle, p)
     end
