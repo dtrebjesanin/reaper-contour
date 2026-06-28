@@ -12,8 +12,10 @@
 -- LATER slice and deliberately NOT built here.
 local M = {}
 
-local lfo    = require("core.lfo")
-local target = require("core.target")
+local lfo         = require("core.lfo")
+local target      = require("core.target")
+local customshape = require("core.customshape")
+local drawpad     = require("ui.drawpad")
 
 -- Shape ids MUST match what core/shapes.lua / core/lfo.lua expect. "None" is FIRST and the
 -- DEFAULT (v2.1 U1): a NO-OP — picking it generates and writes NOTHING (canGenerate=false),
@@ -31,6 +33,7 @@ local SHAPES = {
   { id = "parametric", label = "Parametric" },
   { id = "rectsine",   label = "Rectified sine" },
   { id = "sine2",      label = "Sine\xc2\xb2" },     -- "Sine²" (UTF-8 superscript two)
+  { id = "custom",     label = "Custom (draw)" },
   { id = "random",     label = "Random (S&H)" },
   { id = "drift",      label = "Drift" },
 }
@@ -237,6 +240,8 @@ local function ui(state)
       -- within the session until Re-roll.
       seed      = math.random(1, 2147483647),  -- 2^31-1
 
+      custom    = nil,   -- { store = { presets }, idx = <active 1-based> }; lazily loaded from ExtState
+
       live      = true,   -- LIVE preview ON by default
 
       status    = "",
@@ -270,6 +275,24 @@ local liveGesture = {
 local COLOR_ERR  = 0xE05050FF
 local COLOR_OK   = 0x60C080FF
 local COLOR_HINT = 0xC0A040FF
+
+local function loadCustom()
+  local store = customshape.decode(reaper.GetExtState("Contour", "customPresets") or "")
+  if #store == 0 then store = { customshape.defaultPreset() } end
+  for _, pr in ipairs(store) do pr.points = customshape.clampPoints(pr.points) end
+  local idx = tonumber(reaper.GetExtState("Contour", "customIdx") or "") or 1
+  if idx < 1 or idx > #store then idx = 1 end
+  return { store = store, idx = idx }
+end
+local function saveCustom(c)
+  reaper.SetExtState("Contour", "customPresets", customshape.encode(c.store), true)
+  reaper.SetExtState("Contour", "customIdx", tostring(c.idx), true)
+end
+local function activePoints(g)
+  if not g.custom then g.custom = loadCustom() end
+  local pr = g.custom.store[g.custom.idx]
+  return pr and pr.points or {}
+end
 
 -- Build the lfo.generate params + per-shape output (ppc / ccShape) from panel state.
 --
@@ -324,6 +347,7 @@ local function buildParams(g, spanT0, vmin, vmax)
     curve         = g.curve or 0,                                          -- Pump/AD ease (0..100)
     attack        = g.attack or 50,                                        -- Triangle peak position (%)
     edge          = (g.edge or 50) / 200,                                  -- Trapezoid edge -> [0,0.5]
+    customPoints  = (shape == "custom") and activePoints(g) or nil,
   }
   return params, ccShape
 end
@@ -587,6 +611,36 @@ function M.draw(ctx, state, detected)
     end
   end
 
+  if currentShapeId(g) == "custom" then
+    if not g.custom then g.custom = loadCustom() end
+    local c = g.custom
+    -- preset dropdown
+    local names = {}
+    for _, pr in ipairs(c.store) do names[#names + 1] = pr.name end
+    local items = table.concat(names, "\0") .. "\0"
+    local chg, idx = reaper.ImGui_Combo(ctx, "Preset##cust_preset", c.idx - 1, items, #items)
+    if chg then c.idx = idx + 1; saveCustom(c); acc(true) end
+    reaper.ImGui_SameLine(ctx)
+    if reaper.ImGui_Button(ctx, "New##cust_new") then
+      c.store[#c.store + 1] = { name = "Custom " .. (#c.store + 1), points = customshape.clampPoints(customshape.defaultPreset().points) }
+      c.idx = #c.store; saveCustom(c); acc(true)
+    end
+    reaper.ImGui_SameLine(ctx)
+    if reaper.ImGui_Button(ctx, "Del##cust_del") and #c.store > 1 then
+      table.remove(c.store, c.idx); if c.idx > #c.store then c.idx = #c.store end; saveCustom(c); acc(true)
+    end
+    -- rename (inline text)
+    do
+      local pr = c.store[c.idx]
+      local rv, nm = reaper.ImGui_InputText(ctx, "Name##cust_name", pr.name or "")
+      if rv then pr.name = nm; saveCustom(c) end
+    end
+    -- the pad
+    local padW = reaper.ImGui_GetContentRegionAvail and select(1, reaper.ImGui_GetContentRegionAvail(ctx)) or 360
+    local padChanged = drawpad.draw(ctx, c.store[c.idx].points, { width = padW, height = 140, id = "##cust_pad" })
+    if padChanged then c.store[c.idx].points = customshape.clampPoints(c.store[c.idx].points); saveCustom(c); acc(true) end
+  end
+
   -- == Scope == (CC + Automation Item: write across the Time selection OR the Entire item.
   -- Envelopes are TIME-SELECTION ONLY — a track envelope has no item — so the selector is hidden
   -- for them and the span is always the time selection.)
@@ -693,19 +747,20 @@ function M.draw(ctx, state, detected)
     changed, g.tilt = reaper.ImGui_SliderInt(ctx, "Tilt##gen_tilt", g.tilt, -100, 100, "%d")
     acc(changed); acc(tickReset(ctx, g, "tilt", -100, 100, 0))
     -- Swing for periodic shapes EXCEPT triangle, whose Attack already controls peak position (Swing
-    -- there would just duplicate it).
-    if not special and sid ~= "triangle" then
+    -- there would just duplicate it). Also hidden for custom (draw pad controls the shape directly).
+    if not special and sid ~= "triangle" and sid ~= "custom" then
       changed, g.swing = reaper.ImGui_SliderDouble(ctx, "Swing##gen_swing", g.swing, -1.0, 1.0, "%.2f")
       acc(changed); acc(tickReset(ctx, g, "swing", -1.0, 1.0, 0.0))
     end
     -- Steps quantizes the wave into N flat levels (a staircase). Meaningless on Square (already 2
-    -- levels) and on the special generators.
-    if not special and sid ~= "square" then
+    -- levels) and on the special generators. Hidden for custom (draw pad defines the shape).
+    if not special and sid ~= "square" and sid ~= "custom" then
       changed, g.steps = reaper.ImGui_SliderInt(ctx, "Steps##gen_steps", g.steps, 0, 32, g.steps < 2 and "off" or "%d")
       acc(changed); acc(tickReset(ctx, g, "steps", 0, 32, 0))
     end
     -- Smooth rounds the shape toward a sine. Meaningless on Sine (already a sine) and the specials.
-    if not special and sid ~= "sine" then
+    -- Hidden for custom (the draw pad shape is controlled directly by the user).
+    if not special and sid ~= "sine" and sid ~= "custom" then
       changed, g.smooth = reaper.ImGui_SliderInt(ctx, "Smooth##gen_smooth", g.smooth, 0, 100, "%d")
       acc(changed); acc(tickReset(ctx, g, "smooth", 0, 100, 0))
     end
