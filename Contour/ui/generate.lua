@@ -58,13 +58,6 @@ local FEELS = {
   { label = "Triplet",  mult = 2.0 / 3.0 },
   { label = "Dotted",   mult = 1.5 },
 }
-local function nullJoin(labels)
-  local s = ""
-  for _, l in ipairs(labels) do s = s .. l .. "\0" end
-  return s
-end
-local LENGTH_ITEMS = nullJoin(NOTE_LABELS)
-local FREQ_ITEMS   = nullJoin(FREQ_LABELS)
 local FEEL_ITEMS   = ""
 for _, f in ipairs(FEELS) do FEEL_ITEMS = FEEL_ITEMS .. f.label .. "\0" end
 
@@ -353,7 +346,7 @@ local function buildParams(g, spanT0, vmin, vmax)
     seed          = g.seed or 0,
     smooth        = (g.smooth or 0) / 100,                                  -- 0..1 blend toward sine
     quantizeSteps = (g.steps and g.steps >= 2) and g.steps or nil,         -- nil = off
-    curve         = g.curve or 0,                                          -- Pump/AD ease (0..100)
+    curve         = g.curve or 0,                                          -- bipolar curvature -100..100 (Saw/Triangle Curve)
     attack        = g.attack or 50,                                        -- Triangle peak position (%)
     edge          = (g.edge or 50) / 200,                                  -- Trapezoid edge -> [0,0.5]
     customPoints  = (shape == "custom") and activePoints(g) or nil,

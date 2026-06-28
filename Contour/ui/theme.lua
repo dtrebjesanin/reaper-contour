@@ -118,5 +118,4 @@ function M.popFont(ctx)
   if fontPushed and reaper.ImGui_PopFont then pcall(reaper.ImGui_PopFont, ctx); fontPushed = false end
 end
 
-M.ACCENT = C.accent
 return M

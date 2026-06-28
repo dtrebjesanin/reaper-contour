@@ -254,7 +254,5 @@ end
 -- Expose helpers for tests / callers.
 M.CCSHAPE_BITS = CCSHAPE_BITS
 M._isCCOnLaneChan = isCCOnLaneChan
-M._isCCBZ = isCCBZ
-M._flagsForCCShape = flagsForCCShape
 
 return M

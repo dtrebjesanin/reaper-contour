@@ -339,4 +339,22 @@ h.test("encodeMerged sets the selected bit (0x01) from cc.sel", function()
   h.eq(back.events[1].flags & 0xF0, ms.CCSHAPE_BITS[1])
 end)
 
+-- Out-of-range CC values are clamped to [0,127] before encoding.
+h.test("replaceCCInRange clamps out-of-range CC values to [0,127]", function()
+  local lane, chan = 7, 0
+  local dec = ms.decode(buildBlob({}, EOT))  -- empty take
+  local newCCs = {
+    { ppq = 100, value = 200, shape = 1 },   -- above 127 -> clamped to 127
+    { ppq = 200, value = -5,  shape = 1 },   -- below 0   -> clamped to 0
+  }
+  local res = ms.replaceCCInRange(dec, chan, lane, 0, 1000, newCCs)
+  local back = ms.decode(ms.encode(res))
+  h.eq(#back.events, 2, "two CC events inserted")
+  -- sort by ppq to get stable order
+  local evts = back.events
+  table.sort(evts, function(a, b) return a.ppq < b.ppq end)
+  h.eq(evts[1].msg:byte(3), 127, "value 200 clamped to 127")
+  h.eq(evts[2].msg:byte(3), 0,   "value -5 clamped to 0")
+end)
+
 h.run()

@@ -697,4 +697,32 @@ h.test("generic swing uses the per-cycle model for the sine family", function()
   h.almost(best.value, expected, 1e-6, "generic sine swing must follow swingWarpInverse")
 end)
 
+-- freqWarp / freqWarpInverse round-trip and anchor checks.
+h.test("freqWarp/freqWarpInverse round-trip: inverse(warp(prog, s_f)) == prog", function()
+  local skews  = { -1, -0.5, 0, 1e-6, 0.3, 1 }
+  local progs  = { 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0 }
+  for _, s_f in ipairs(skews) do
+    for _, prog in ipairs(progs) do
+      local rel  = lfo.freqWarpInverse(prog, s_f)
+      local back = lfo.freqWarp(rel, s_f)
+      h.almost(back, prog, 1e-9, "round-trip s_f=" .. s_f .. " prog=" .. prog)
+    end
+  end
+end)
+
+h.test("freqWarp/freqWarpInverse: anchors at 0 and 1 for any s_f", function()
+  for _, s_f in ipairs({ -1, -0.5, 0, 0.3, 1 }) do
+    h.almost(lfo.freqWarp(0, s_f), 0, 1e-12, "freqWarp(0,s_f) anchor s_f=" .. s_f)
+    h.almost(lfo.freqWarp(1, s_f), 1, 1e-12, "freqWarp(1,s_f) anchor s_f=" .. s_f)
+    h.almost(lfo.freqWarpInverse(0, s_f), 0, 1e-12, "freqWarpInverse(0,s_f) anchor s_f=" .. s_f)
+    h.almost(lfo.freqWarpInverse(1, s_f), 1, 1e-12, "freqWarpInverse(1,s_f) anchor s_f=" .. s_f)
+  end
+end)
+
+h.test("freqWarp identity when s_f==0", function()
+  for _, prog in ipairs({ 0, 0.25, 0.5, 0.75, 1.0 }) do
+    h.almost(lfo.freqWarp(prog, 0), prog, 1e-12, "freqWarp identity at s_f=0, prog=" .. prog)
+  end
+end)
+
 h.run()

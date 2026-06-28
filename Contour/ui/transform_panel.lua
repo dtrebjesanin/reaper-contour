@@ -5,6 +5,7 @@ M.scope = "points"  -- "points" | "timesel" — which region Launch hands to the
 
 local COLOR_HINT = 0xC0A040FF
 local COLOR_OK   = 0x60C080FF
+local COLOR_ERR  = 0xE0A060FF
 
 -- Resolve the contour_transform action's command id so Launch can fire it via Main_OnCommand — which works
 -- regardless of which window is focused (a Main-section hotkey won't fire while the MIDI editor has focus).
@@ -45,7 +46,7 @@ function M.draw(ctx, state)
   reaper.ImGui_SameLine(ctx)
   reaper.ImGui_TextColored(ctx, COLOR_HINT, "(or a hotkey on contour_transform.lua)")
 
-  if M.status then reaper.ImGui_TextColored(ctx, COLOR_OK, M.status) end
+  if M.status then reaper.ImGui_TextColored(ctx, COLOR_ERR, M.status) end
 end
 
 return M

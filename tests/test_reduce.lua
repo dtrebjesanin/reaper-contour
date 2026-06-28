@@ -154,4 +154,18 @@ h.test("thinCurve passes through tiny lists", function()
   h.eq(#reduce.thinCurve({ { time = 0, value = 0 } }, 0.1, { vmin = 0, vmax = 1 }), 1)
 end)
 
+-- rdp with equal times (dx==0 branch): exercises the degenerate segment where all three
+-- points share the same time, so the line length is zero and the perpendicular is undefined.
+-- The function must not error and must return a valid result.
+h.test("rdp with equal times (dx==0): no error, valid result", function()
+  local pts = { { time = 0, value = 0 }, { time = 0, value = 5 }, { time = 0, value = 0 } }
+  local ok, res = pcall(reduce.rdp, pts, 1.0)
+  h.truthy(ok, "rdp must not error on zero-width segment")
+  h.truthy(type(res) == "table", "rdp must return a table")
+  h.truthy(#res >= 2, "result must have at least the two endpoints")
+  -- endpoints must be preserved
+  h.eq(res[1].time, 0); h.eq(res[1].value, 0)
+  h.eq(res[#res].time, 0); h.eq(res[#res].value, 0)
+end)
+
 h.run()

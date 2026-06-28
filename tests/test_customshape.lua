@@ -167,4 +167,60 @@ h.test("custom discontinuous shape ends on the cycle-END value", function()
   h.almost(pts[#pts].value, 1, 1e-6, "a rising-ramp custom must end at +1 (cycle end), not -1")
 end)
 
+-- ── valueAt edge cases ────────────────────────────────────────────────────────
+h.test("valueAt: n==0 returns 0, n==1 returns that point's y", function()
+  h.almost(cs.valueAt({}, 0.5), 0)
+  h.almost(cs.valueAt({ { x = 0, y = 0.7, shape = 1, tension = 0 } }, 0.3), 0.7)
+end)
+
+h.test("valueAt: 2-point [-1,+1] span — endpoints and each shape at t=0.5", function()
+  local function pts2(shape, tension)
+    return {
+      { x = 0, y = -1, shape = shape, tension = tension or 0 },
+      { x = 1, y =  1, shape = 1,     tension = 0 },
+    }
+  end
+
+  -- endpoints (t=0 wraps, t=1 wraps back to 0 == -1)
+  h.almost(cs.valueAt(pts2(1), 0), -1, 1e-9, "t=0 start")
+  h.almost(cs.valueAt(pts2(1), 1), -1, 1e-9, "t=1 wraps to 0 -> start value")
+
+  -- linear shape (1): midpoint exactly 0
+  h.almost(cs.valueAt(pts2(1), 0.5), 0.0, 1e-9, "linear midpoint")
+
+  -- slow start/end shape (2): e=(1-cos(pi*0.5))/2=0.5 => y=0.0
+  h.almost(cs.valueAt(pts2(2), 0.5), 0.0, 1e-9, "slow midpoint")
+
+  -- fast start shape (3): e=sin(pi*0.25)=sqrt(2)/2 => y≈0.4142
+  h.almost(cs.valueAt(pts2(3), 0.5), 2 * math.sin(math.pi * 0.25) - 1, 1e-9, "fast-start midpoint")
+
+  -- fast end shape (4): e=1-cos(pi*0.25) => y≈-0.4142
+  h.almost(cs.valueAt(pts2(4), 0.5), 2 * (1 - math.cos(math.pi * 0.25)) - 1, 1e-9, "fast-end midpoint")
+
+  -- step shape (0): holds start => y=-1
+  h.almost(cs.valueAt(pts2(0), 0.5), -1.0, 1e-9, "step holds start")
+
+  -- bezier shape (5) with tension=0.6: e=bezierFrac(0.5,0.6)≈0.1252 => y≈-0.7496
+  local e5 = cs.bezierFrac(0.5, 0.6)
+  h.almost(cs.valueAt(pts2(5, 0.6), 0.5), -1 + 2 * e5, 1e-6, "bezier t=0.5 tension 0.6")
+end)
+
+h.test("valueAt: fractional wrap (t=1.25 == t=0.25)", function()
+  local pts = {
+    { x = 0, y = -1, shape = 1, tension = 0 },
+    { x = 1, y =  1, shape = 1, tension = 0 },
+  }
+  h.almost(cs.valueAt(pts, 1.25), cs.valueAt(pts, 0.25), 1e-9, "t=1.25 wraps to 0.25")
+end)
+
+-- ── clampPoints shape rounding ────────────────────────────────────────────────
+h.test("clampPoints rounds shape fractional values and handles nil shape", function()
+  local function onePt(shape)
+    return cs.clampPoints({ { x = 0.5, y = 0, shape = shape, tension = 0 } })
+  end
+  h.eq(onePt(2.6)[1].shape, 3,  "2.6 rounds to 3")
+  h.eq(onePt(4.4)[1].shape, 4,  "4.4 rounds to 4")
+  h.eq(onePt(nil)[1].shape, 1,  "nil defaults to 1")
+end)
+
 h.run()

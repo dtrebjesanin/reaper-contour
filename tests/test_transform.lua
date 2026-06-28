@@ -197,4 +197,36 @@ h.test("warp2d: a hard time-warp keeps times strictly increasing (no folding)", 
   for i = 2, #out do h.truthy(out[i].t > out[i-1].t, "strictly increasing at index " .. i) end
 end)
 
+-- Degenerate span: vscale with anchorV==boundaryV (zero-height box) must return input unchanged
+-- and produce no NaN.
+h.test("vscale: zero-height box (anchorV==boundaryV) returns input unchanged, no NaN", function()
+  local pts = { P(0, 0.5), P(1, 0.8) }
+  -- anchorV == boundaryV: span=0, every u is 0, no scaling occurs
+  local out = tr.vscale(pts, 0.5, 0.5, 1.5, { knob = 0, shape = "power" })
+  for i = 1, #pts do
+    h.truthy(out[i].v == out[i].v, "no NaN at index " .. i)  -- NaN != NaN
+    h.almost(out[i].v, pts[i].v, 1e-9, "value unchanged at index " .. i)
+  end
+end)
+
+-- Degenerate time span: tilt with tmin==tmax must return finite, unchanged values.
+h.test("tilt: zero time span (tmin==tmax) returns finite, unchanged values", function()
+  local pts = { P(5, 0.3), P(5, 0.7) }
+  local out = tr.tilt(pts, 5, 5, 0.4, { knob = 0, shape = "power", side = "right", symmetrical = false })
+  for i = 1, #pts do
+    h.truthy(out[i].v == out[i].v, "no NaN at index " .. i)
+    h.almost(out[i].v, pts[i].v, 1e-9, "value unchanged at index " .. i)
+  end
+end)
+
+-- Degenerate time span: warp with tmin==tmax must return finite, unchanged values.
+h.test("warp: zero time span (tmin==tmax) returns finite, unchanged values", function()
+  local pts = { P(3, 0.2), P(3, 0.9) }
+  local out = tr.warp(pts, "value", 3, 3, 0.5, 0.4, { knob = 0, shape = "power" })
+  for i = 1, #pts do
+    h.truthy(out[i].v == out[i].v, "no NaN at index " .. i)
+    h.almost(out[i].t, pts[i].t, 1e-9, "time unchanged at index " .. i)
+  end
+end)
+
 h.run()

@@ -745,7 +745,6 @@ function M.fromContext(detected)
   return nil, "Unknown target"
 end
 
-M._clampCC = clampCC   -- exposed for tests
 M.CC = CC
 M.AI = AI
 return M

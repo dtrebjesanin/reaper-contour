@@ -30,13 +30,16 @@
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua
 --   [nomain] core/context.lua
+--   [nomain] core/customshape.lua
 --   [nomain] core/lfo.lua
 --   [nomain] core/midistream.lua
 --   [nomain] core/reduce.lua
 --   [nomain] core/shapes.lua
+--   [nomain] core/starters.lua
 --   [nomain] core/target.lua
 --   [nomain] core/transform.lua
 --   [nomain] ui/common.lua
+--   [nomain] ui/drawpad.lua
 --   [nomain] ui/generate.lua
 --   [nomain] ui/overlay.lua
 --   [nomain] ui/reduce.lua
