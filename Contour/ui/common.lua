@@ -33,7 +33,7 @@ end
 
 -- Draw a small "notch" on the just-drawn slider at its default value (a fader detent). Call
 -- IMMEDIATELY after the slider. Guarded for older ReaImGui without the DrawList APIs.
-function M.drawDefaultTick(ctx, vmin, vmax, vdef)
+local function drawDefaultTick(ctx, vmin, vmax, vdef)
   if not (reaper.ImGui_GetItemRectMin and reaper.ImGui_GetItemRectMax and reaper.ImGui_GetWindowDrawList
       and reaper.ImGui_DrawList_AddLine and reaper.ImGui_CalcItemWidth) then return end
   if vmax <= vmin then return end
@@ -52,7 +52,7 @@ end
 -- Draw the default notch AND snap g[key] back to vdef on a LABEL double-click (the slider head
 -- consumes its own clicks, so double-click works on the label). Returns true if a reset happened.
 function M.tickReset(ctx, g, key, vmin, vmax, vdef)
-  M.drawDefaultTick(ctx, vmin, vmax, vdef)
+  drawDefaultTick(ctx, vmin, vmax, vdef)
   if reaper.ImGui_IsItemHovered and reaper.ImGui_IsMouseDoubleClicked
      and reaper.ImGui_IsItemHovered(ctx) and reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
     g[key] = vdef

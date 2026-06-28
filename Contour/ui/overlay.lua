@@ -353,7 +353,7 @@ function M.frame(ctx)
   -- bake into g.orig so subsequent drags chain off the result. Only when not mid-drag.
   if g and not g.zone and M._pendingOneShot then
     local op = M._pendingOneShot; M._pendingOneShot = nil
-    local b = M._bounds(g.orig)
+    local b = bounds(g.orig)
     local newPts, clrMin, clrMax
     if op == "reverse" then
       newPts = tr.reverse(g.orig, b.tmin, b.tmax)
@@ -412,7 +412,7 @@ function M.frame(ctx)
     Y    = function(v)  return ac.valueToY(v, g.vlo, g.vhi, lr.yTop, lr.yBot) end
     yToV = function(y)  return ac.yToValue(y, g.vlo, g.vhi, lr.yTop, lr.yBot) end
   end
-  local b = M._bounds(g.orig)
+  local b = bounds(g.orig)
   local x0,x1 = X(b.tmin), X(b.tmax)
   local yt,yb = Y(b.vmax), Y(b.vmin)
   local cy = (yt+yb)/2
@@ -607,7 +607,7 @@ function M.frame(ctx)
   return true
 end
 
-function M._bounds(pts)
+local function bounds(pts)
   local b = { tmin=1e18, tmax=-1e18, vmin=1e18, vmax=-1e18 }
   for _, p in ipairs(pts) do
     if p.t<b.tmin then b.tmin=p.t end; if p.t>b.tmax then b.tmax=p.t end
