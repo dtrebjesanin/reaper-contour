@@ -3,6 +3,7 @@ local M = {}
 local floor, ceil, min, max, abs = math.floor, math.ceil, math.min, math.max, math.abs
 local cos, pi, sqrt = math.cos, math.pi, math.sqrt
 local shapes = require("core.shapes")
+local customshape = require("core.customshape")   -- custom-curve value sampler (valueAt) for the SSS path
 
 function M.cycleLength(rate, spanLen)
   if rate.mode == "free" then
@@ -552,6 +553,7 @@ function M.generate(span, params)
   -- SPARSE emitters, which would be far too coarse on the generic path).
   if p.quantizeSteps and p.quantizeSteps >= 2 then ppc = max(ppc, 4 * p.quantizeSteps) end
   if (p.smooth or 0) > 0 then ppc = max(ppc, 24) end
+  if p.shape == "custom" then ppc = max(ppc, 32) end   -- an arbitrary drawn curve needs denser sampling
   local dt = cycleLen / ppc
   local n = max(1, floor(spanLen / dt + 0.5))
 
@@ -624,9 +626,10 @@ function M.generate(span, params)
     return generateRectsine(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   end
 
-  -- CUSTOM: user-drawn one-cycle shape repeated at the Rate. (Smooth/Steps are Phase 2; the guard is
-  -- inert now since they're hidden for Custom.)
-  if p.shape == "custom" and (p.smooth or 0) == 0 and not p.quantizeSteps then
+  -- CUSTOM: user-drawn one-cycle shape repeated at the Rate. Sparse + exact-bezier when no SSS; when
+  -- Swing/Steps/Smooth is active it routes to the generic sampler below (same SSS path as every other
+  -- shape), which reads the curve via customshape.valueAt.
+  if p.shape == "custom" and (p.smooth or 0) == 0 and not p.quantizeSteps and (p.swing or 0) == 0 then
     return generateCustom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSkew, freqSkew, tiltOffset)
   end
 
@@ -656,7 +659,14 @@ function M.generate(span, params)
     end
     local cyc = floor(cyclePos)
     local tInCycle = cyclePos - cyc
-    local sv = shapes.value(p.shape, tInCycle, p)
+    local sv
+    if p.shape == "custom" then
+      sv = customshape.valueAt(p.customPoints, tInCycle)   -- the drawn curve's value at this phase
+      local sm = p.smooth or 0; if sm > 1 then sm = 1 end   -- Smooth blends toward sine (same as shapes.value)
+      if sm > 0 then sv = sv * (1 - sm) + shapes.base.sine(tInCycle) * sm end
+    else
+      sv = shapes.value(p.shape, tInCycle, p)
+    end
     sv = M.quantizeBipolar(sv, p.quantizeSteps)
     local depth = M.fadeDepth(rel, p.fadeIn, p.fadeOut)
     local half = ampHalf(amp, ampSkew, rel)

@@ -21,13 +21,17 @@ because it would duplicate all of that.
 
 ## Phasing
 
-- **Phase 1 (this spec):** freehand draw pad (add/move/delete points, bendable segments) + preset
+- **Phase 1 (DONE):** freehand draw pad (add/move/delete points, bendable segments) + preset
   library + the `generateCustom` engine. Controls: Rate, Amplitude, Baseline, Phase, Amp skew, Tilt,
-  Fade, Freq skew. (No Swing/Steps/Smooth.)
-- **Phase 2 (future):** add Swing / Steps / Smooth to Custom (needs a value-sampling path so the
-  generic sampler can quantize/round/swing a custom curve).
-- **Phase 3 (future):** stamp palette — pick a primitive (sine/triangle/saw/square/…) and drop its
-  points into a region of the cycle. Freehand stays; stamping just inserts points into the same shape.
+  Fade, Freq skew.
+- **Phase 2 (DONE):** Swing / Steps / Smooth on Custom via the generic sampler (`customshape.valueAt`
+  feeds the same SSS path as the built-in shapes). Also delivered alongside: bezier calibrated to
+  REAPER's exact shape-5 curve (schwa's tension model), grid density + snap, a "Start from" loader that
+  seeds the pad from a built-in shape (`core.starters`, real emitter output), and a stretchable pad.
+- **Phase 3 — CUT:** a region stamp palette (drop a primitive into part of the cycle) was considered
+  and dropped. It overlaps the Shape dropdown + Transform, its only unique trick (composing two
+  primitives in one cycle) is a rare need, and the "Start from" loader already covers seeding. Not
+  building it unless a concrete request appears.
 
 ## Data model
 
@@ -134,7 +138,7 @@ Freq skew**. Hidden: Swing, Steps, Smooth, Pulse width, Edge, Attack, Curve. (Cu
 
 ## Out of scope (Phase 1)
 
-- Swing / Steps / Smooth on Custom (Phase 2).
-- The stamp-a-primitive palette (Phase 3) — but `point.shape` already supports the primitives' eases.
+- The stamp-a-primitive palette — considered and CUT (see Phasing). The Shape dropdown + Transform +
+  the "Start from" loader cover the realistic needs.
 - Per-project (vs global) preset scoping; import/export of preset files. (Global ExtState only for now.)
 - Changes to any existing shape, Reduce, or Transform.

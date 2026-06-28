@@ -6,7 +6,7 @@
 --   point   = x "," y "," shape "," tension     (numbers via %.6g)
 -- Names percent-escape the 5 delimiters so any name survives.
 local M = {}
-local floor = math.floor
+local floor, cos, sin, pi = math.floor, math.cos, math.sin, math.pi
 local function clampn(v, lo, hi) v = tonumber(v) or 0; if v < lo then return lo elseif v > hi then return hi end return v end
 
 function M.defaultPreset()
@@ -67,6 +67,33 @@ end
 function M.bezierXY(u, tension)
   local p1x, p1y, p2x, p2y = bezCP(tension or 0)
   return cubic(0, p1x, p2x, 1, u), (1 - cubic(1, p1y, p2y, -1, u)) * 0.5
+end
+
+-- Value of the custom one-cycle curve at intra-cycle position t in [0,1) (wraps). Evaluates the
+-- piecewise CC eases (bezier via bezierFrac; sine eases 2/3/4; step 0; linear). Lets the generic
+-- sampler quantize / smooth / swing a custom shape just like the built-in shapes (Phase 2).
+function M.valueAt(points, t)
+  local n = points and #points or 0
+  if n == 0 then return 0 end
+  if n == 1 then return points[1].y end
+  t = t - floor(t)
+  for i = 1, n - 1 do
+    local a, b = points[i], points[i + 1]
+    if t < b.x - 1e-12 or i == n - 1 then            -- half-open: at a breakpoint, use the next segment
+      local w = b.x - a.x
+      local tt = (w > 1e-12) and (t - a.x) / w or 0
+      if tt < 0 then tt = 0 elseif tt > 1 then tt = 1 end
+      local s, e = a.shape or 1, nil
+      if s == 5 then e = M.bezierFrac(tt, a.tension or 0)
+      elseif s == 2 then e = (1 - cos(pi * tt)) / 2
+      elseif s == 3 then e = sin(pi * tt / 2)
+      elseif s == 4 then e = 1 - cos(pi * tt / 2)
+      elseif s == 0 then e = 0
+      else e = tt end
+      return a.y + (b.y - a.y) * e
+    end
+  end
+  return points[n].y
 end
 
 local ESC = { ["%"] = "%25", ["|"] = "%7C", ["~"] = "%7E", [";"] = "%3B", [","] = "%2C" }

@@ -819,20 +819,20 @@ function M.draw(ctx, state, detected)
     changed, g.tilt = reaper.ImGui_SliderInt(ctx, "Tilt##gen_tilt", g.tilt, -100, 100, "%d")
     acc(changed); acc(tickReset(ctx, g, "tilt", -100, 100, 0))
     -- Swing for periodic shapes EXCEPT triangle, whose Attack already controls peak position (Swing
-    -- there would just duplicate it). Also hidden for custom (draw pad controls the shape directly).
-    if not special and sid ~= "triangle" and sid ~= "custom" then
+    -- there would just duplicate it). Custom honors Swing via the generic SSS path.
+    if not special and sid ~= "triangle" then
       changed, g.swing = reaper.ImGui_SliderDouble(ctx, "Swing##gen_swing", g.swing, -1.0, 1.0, "%.2f")
       acc(changed); acc(tickReset(ctx, g, "swing", -1.0, 1.0, 0.0))
     end
     -- Steps quantizes the wave into N flat levels (a staircase). Meaningless on Square (already 2
-    -- levels) and on the special generators. Hidden for custom (draw pad defines the shape).
-    if not special and sid ~= "square" and sid ~= "custom" then
+    -- levels) and on the special generators. Custom is quantized via the generic SSS path.
+    if not special and sid ~= "square" then
       changed, g.steps = reaper.ImGui_SliderInt(ctx, "Steps##gen_steps", g.steps, 0, 32, g.steps < 2 and "off" or "%d")
       acc(changed); acc(tickReset(ctx, g, "steps", 0, 32, 0))
     end
     -- Smooth rounds the shape toward a sine. Meaningless on Sine (already a sine) and the specials.
-    -- Hidden for custom (the draw pad shape is controlled directly by the user).
-    if not special and sid ~= "sine" and sid ~= "custom" then
+    -- Custom is smoothed (blended toward sine) via the generic SSS path.
+    if not special and sid ~= "sine" then
       changed, g.smooth = reaper.ImGui_SliderInt(ctx, "Smooth##gen_smooth", g.smooth, 0, 100, "%d")
       acc(changed); acc(tickReset(ctx, g, "smooth", 0, 100, 0))
     end

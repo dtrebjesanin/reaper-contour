@@ -120,6 +120,45 @@ h.test("custom degenerate (no points) is a safe flat line", function()
   h.almost(pts[1].time, 0, 1e-9); h.almost(pts[#pts].time, 2, 1e-9)
 end)
 
+-- Phase 2: Swing / Steps / Smooth route Custom through the generic sampler (same path as other shapes).
+local function customSSS(extra)
+  local p = { shape = "custom", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0,
+    customPoints = { { x = 0, y = -1, shape = 1, tension = 0 }, { x = 0.5, y = 1, shape = 1, tension = 0 },
+      { x = 1, y = -1, shape = 1, tension = 0 } } }   -- a triangle-ish custom curve
+  for k, v in pairs(extra or {}) do p[k] = v end
+  return lfo.generate({ t0 = 0, t1 = 2 }, p)
+end
+
+h.test("custom with no SSS stays on the sparse emitter", function()
+  h.truthy(#customSSS() <= 12, "sparse path (few points)")
+end)
+
+h.test("custom + Steps quantizes into discrete levels (generic path)", function()
+  local q = customSSS({ quantizeSteps = 4 })
+  h.truthy(#q > 12, "dense generic path under Steps")
+  local set = {}
+  for _, p in ipairs(q) do set[string.format("%.4f", p.value)] = true end
+  local distinct = 0; for _ in pairs(set) do distinct = distinct + 1 end
+  h.truthy(distinct <= 8, "quantized to few levels (got " .. distinct .. ")")
+end)
+
+h.test("custom + Smooth=1 morphs toward the sine (not the drawn triangle)", function()
+  local s = customSSS({ smooth = 1 })
+  local near
+  for _, p in ipairs(s) do if math.abs(p.time - 0.125) < 1e-6 then near = p end end
+  h.truthy(near, "has a sample at t=0.125")
+  -- at t=0.125 a sine = -cos(pi/4) = -0.707; the triangle would be -0.5. Smooth=1 must read as sine.
+  h.truthy(near.value < -0.6, "smoothed value is sine-like (" .. string.format("%.3f", near.value) .. "), not triangle -0.5")
+end)
+
+h.test("custom + Swing routes to the generic sampler and covers the span", function()
+  local base = customSSS()
+  local sw = customSSS({ swing = 0.5 })
+  h.truthy(#sw > #base, "swing forces the dense generic path")
+  h.almost(sw[1].time, 0, 1e-9); h.almost(sw[#sw].time, 2, 1e-9)
+  for i = 2, #sw do h.truthy(sw[i].time > sw[i - 1].time, "strictly increasing") end
+end)
+
 h.test("custom discontinuous shape ends on the cycle-END value", function()
   local pts = lfo.generate({ t0 = 0, t1 = 3 }, { shape = "custom",
     rate = { mode = "free", cycles = 3 }, amplitude = 1, baseline = 0,
