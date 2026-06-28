@@ -1,8 +1,14 @@
 name: check
 
-# Validates the ReaPack metadata headers on every push and pull request, so a malformed header (a bad
-# @provides path, a blank line that prematurely ends the metadata block, a non-increasing @version, ...)
-# fails loudly in CI instead of shipping a broken package. Does NOT commit anything.
+# Two independent gates on every push and pull request (neither commits anything):
+#   * reapack-index-check — validates the ReaPack metadata headers so a malformed header (a bad
+#     @provides path, a blank line that prematurely ends the metadata block, a non-increasing
+#     @version, ...) fails loudly in CI instead of shipping a broken package.
+#   * lua-tests — runs the headless test suite (tests/test_*.lua) under Lua 5.4. Covers the pure
+#     engine, the native-CC-LFO byte-match, the panel render-smoke + option-matrix sweeps, and the
+#     reduce/drawpad panel logic. The in-REAPER self-test (tests/reaper/) is NOT run here — it needs
+#     a live REAPER and is run manually from the Action list.
+# Separate from deploy.yml: this never regenerates or pushes index.xml, so it can't trigger a publish.
 
 on:
   push:
@@ -26,3 +32,30 @@ jobs:
       run:  gem install reapack-index
     - name: Validate metadata headers
       run:  reapack-index --check
+
+  lua-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Fetch repository
+      uses: actions/checkout@v4
+    - name: Install Lua 5.4
+      run:  sudo apt-get update && sudo apt-get install -yy lua5.4
+    # The test files set package.path relative to the repo root (./Contour, ./tests), which is the
+    # Actions working directory, and harness.run() exits non-zero on any failure. Run every file; print
+    # a one-line PASS per file and the FULL output only for failures; fail the job if any file failed.
+    - name: Run headless test suite
+      run: |
+        fail=0; files=0
+        for t in tests/test_*.lua; do
+          files=$((files + 1))
+          if lua5.4 "$t" > /tmp/contour-test.log 2>&1; then
+            echo "PASS  $t  ($(grep -oE '[0-9]+ passed' /tmp/contour-test.log | tail -1))"
+          else
+            fail=$((fail + 1))
+            echo "FAIL  $t"
+            cat /tmp/contour-test.log
+          fi
+        done
+        echo "---"
+        echo "$files test files run, $fail failed"
+        exit $fail
