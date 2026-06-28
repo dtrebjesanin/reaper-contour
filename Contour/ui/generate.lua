@@ -15,6 +15,7 @@ local M = {}
 local lfo         = require("core.lfo")
 local target      = require("core.target")
 local customshape = require("core.customshape")
+local starters    = require("core.starters")
 local drawpad     = require("ui.drawpad")
 
 -- Shape ids MUST match what core/shapes.lua / core/lfo.lua expect. "None" is FIRST and the
@@ -250,9 +251,12 @@ end
 
 -- Reset (U3): restore every documented control to its default, in place (keep the
 -- table reference — liveGesture / state hold no ref to it but other fields like
--- ccNum/seed/live must survive). Lane is intentionally preserved.
+-- ccNum/seed/live must survive). Lane is intentionally preserved. The SELECTED SHAPE is
+-- preserved too: Reset clears the parameters for the current shape, not the shape choice.
 local function resetDefaults(g)
+  local keepShape = g.shapeIdx
   for k, v in pairs(DEFAULTS) do g[k] = v end
+  g.shapeIdx = keepShape
 end
 
 -- Live-gesture bookkeeping (script-level; one panel instance).
@@ -279,16 +283,20 @@ local function loadCustom()
   for _, pr in ipairs(store) do pr.points = customshape.clampPoints(pr.points) end
   local idx = tonumber(reaper.GetExtState("Contour", "customIdx") or "") or 1
   if idx < 1 or idx > #store then idx = 1 end
-  local gx, gy, sn = (reaper.GetExtState("Contour", "customGrid") or ""):match("^(%d+),(%d+),(%d)")
+  local gx, gy, sn, ph = (reaper.GetExtState("Contour", "customGrid") or ""):match("^(%d+),(%d+),(%d),?(%d*)")
   local gridX = math.max(1, math.min(64, tonumber(gx) or 4))   -- pad grid divisions (time)
   local gridY = math.max(1, math.min(64, tonumber(gy) or 2))   -- pad grid divisions (value)
-  return { store = store, idx = idx, gridX = gridX, gridY = gridY, snap = sn == "1" }
+  local padH = math.max(90, math.min(600, tonumber(ph) or 200)) -- stretchable pad height (px)
+  return { store = store, idx = idx, gridX = gridX, gridY = gridY, snap = sn == "1", padH = padH }
 end
 local function saveCustom(c)
   reaper.SetExtState("Contour", "customPresets", customshape.encode(c.store), true)
   reaper.SetExtState("Contour", "customIdx", tostring(c.idx), true)
-  reaper.SetExtState("Contour", "customGrid", string.format("%d,%d,%d", c.gridX or 4, c.gridY or 2, c.snap and 1 or 0), true)
+  reaper.SetExtState("Contour", "customGrid",
+    string.format("%d,%d,%d,%d", c.gridX or 4, c.gridY or 2, c.snap and 1 or 0, c.padH or 200), true)
 end
+-- drag-to-resize state for the pad's bottom grabber (script-level; one panel instance)
+local padResize = { active = false, startY = 0, startH = 0 }
 local function activePoints(g)
   if not g.custom then g.custom = loadCustom() end
   local pr = g.custom.store[g.custom.idx]
@@ -645,6 +653,21 @@ function M.draw(ctx, state, detected)
       if rv then pr.name = nm end
       if reaper.ImGui_IsItemDeactivatedAfterEdit and reaper.ImGui_IsItemDeactivatedAfterEdit(ctx) then saveCustom(c) end
     end
+    -- start from a built-in shape: load the toolkit's OWN shape (via core.starters) into the current
+    -- preset to tweak. Replaces the current points (New first to keep the old one).
+    do
+      local names = {}
+      for _, s in ipairs(starters.list) do names[#names + 1] = s.name end
+      reaper.ImGui_Text(ctx, "Start from"); reaper.ImGui_SameLine(ctx)
+      reaper.ImGui_SetNextItemWidth(ctx, 150)
+      local chg, si = reaper.ImGui_Combo(ctx, "##cust_starter", c.starterIdx or 0, table.concat(names, "\0") .. "\0", #names)
+      if chg then c.starterIdx = si end
+      reaper.ImGui_SameLine(ctx)
+      if reaper.ImGui_Button(ctx, "Load##cust_loadshape") then
+        local s = starters.list[(c.starterIdx or 0) + 1]
+        if s then c.store[c.idx].points = customshape.clampPoints(starters.points(s.id)); saveCustom(c); acc(true) end
+      end
+    end
     -- grid density + snap (pad editing aids; they don't change the generated curve, so no re-apply)
     do
       reaper.ImGui_SetNextItemWidth(ctx, 86)
@@ -658,10 +681,31 @@ function M.draw(ctx, state, detected)
       local csn, sn = reaper.ImGui_Checkbox(ctx, "Snap##cust_snap", c.snap and true or false)
       if csn then c.snap = sn; saveCustom(c) end
     end
-    -- the pad
+    -- the pad (height is user-stretchable via the grabber below; persisted)
     local padW = reaper.ImGui_GetContentRegionAvail and select(1, reaper.ImGui_GetContentRegionAvail(ctx)) or 360
     local padChanged = drawpad.draw(ctx, c.store[c.idx].points,
-      { width = padW, height = 140, id = "##cust_pad", gridX = c.gridX, gridY = c.gridY, snap = c.snap })
+      { width = padW, height = c.padH or 200, id = "##cust_pad", gridX = c.gridX, gridY = c.gridY, snap = c.snap })
+    -- resize grabber: a thin strip under the pad; drag it to change the pad height
+    reaper.ImGui_InvisibleButton(ctx, "##cust_pad_resize", padW, 7)
+    if reaper.ImGui_IsItemHovered(ctx) or reaper.ImGui_IsItemActive(ctx) then
+      if reaper.ImGui_SetMouseCursor and reaper.ImGui_MouseCursor_ResizeNS then
+        reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+      end
+    end
+    if reaper.ImGui_GetItemRectMin and reaper.ImGui_DrawList_AddLine then   -- draw a centered grab hint
+      local gx0, gy0 = reaper.ImGui_GetItemRectMin(ctx)
+      local gx1, gy1 = reaper.ImGui_GetItemRectMax(ctx)
+      local gdl = reaper.ImGui_GetWindowDrawList(ctx)
+      local cx, cyy = (gx0 + gx1) / 2, (gy0 + gy1) / 2
+      reaper.ImGui_DrawList_AddLine(gdl, cx - 14, cyy, cx + 14, cyy, 0x6A737BFF, 2)
+    end
+    if reaper.ImGui_IsItemActive(ctx) then
+      local _, my = reaper.ImGui_GetMousePos(ctx)
+      if not padResize.active then padResize.active = true; padResize.startY = my; padResize.startH = c.padH or 200 end
+      c.padH = math.max(90, math.min(600, padResize.startH + (my - padResize.startY)))
+    elseif padResize.active then
+      padResize.active = false; saveCustom(c)   -- persist once the drag ends
+    end
     if padChanged then c._dirty = true; acc(true) end                    -- live re-apply each drag frame
     if c._dirty and not reaper.ImGui_IsMouseDown(ctx, 0) then            -- persist once the gesture ends
       c.store[c.idx].points = customshape.clampPoints(c.store[c.idx].points)
