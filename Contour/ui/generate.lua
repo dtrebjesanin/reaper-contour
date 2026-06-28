@@ -133,7 +133,7 @@ end
 --   amplitude -200..200  (50 = half-swing of 31.75 on a 0..127 lane; negative inverts; >100 clips)
 --   ampSkew   -100..100  (global amplitude ramp; +100 = 0->full L->R)
 --   freqSkew  -100..100  (global phase time-warp; +100 bunches cycles to the right)
---   tilt      -100..100  (global full-range drift; +100 = +full range at the right edge)
+--   tilt      -100..100  (bipolar see-saw around the center; + tilts right up/left down, - the reverse)
 --   phase        0..100  (slider units; phase = phaseSlider/100 cycles, so 100 = one full cycle)
 -- pulseWidth/swing keep their prior 0..1 / -1..1 ranges.
 local DEFAULTS = {
@@ -276,7 +276,7 @@ end
 -- MID = (vmin+vmax)/2 and HALF = (vmax-vmin)/2 (e.g. 63.5 / 63.5 on a 0..127 CC lane):
 --   baseline(center) = MID + (baselinePct/100)*HALF      -- 0% => center, +/-100% => vmax/vmin
 --   amplitude(baseHalf) = (amplitudePct/100)*HALF        -- 50% => 31.75
---   tiltOffset       = (tiltPct/100)*(vmax-vmin)          -- full-range; +100% => +127 at right
+--   seesawOffset     = (tiltPct/100)*(vmax-vmin)          -- bipolar see-saw; +100% => +/- half range at edges
 --   ampSkew/freqSkew = pct/100  (mapped into [-1,1])
 local function buildParams(g, spanT0, vmin, vmax)
   -- Out-of-range shapeIdx falls back to "none" (a no-op) rather than a surprise Sine write.
@@ -298,17 +298,21 @@ local function buildParams(g, spanT0, vmin, vmax)
   -- Value-unit conversion from native % sliders.
   local mid  = (vmin + vmax) / 2
   local half = (vmax - vmin) / 2
-  local center     = mid + (g.baseline / 100) * half
-  local baseHalf   = (g.amplitude / 100) * half
-  local tiltOffset = (g.tilt / 100) * (vmax - vmin)
+  local center       = mid + (g.baseline / 100) * half
+  local baseHalf     = (g.amplitude / 100) * half
+  -- The UI "Tilt" slider is a BIPOLAR see-saw (tilt left / tilt right around the center), driven via
+  -- seesawOffset. REAPER's native LEFT-anchored tilt (tiltOffset, byte-matched) is kept in the engine
+  -- for native parity but is not exposed in the panel.
+  local seesawOffset = (g.tilt / 100) * (vmax - vmin)
 
   local params = {
-    shape      = shape,
-    rate       = rate,
-    amplitude  = baseHalf,             -- VALUE-UNIT half-swing (baseHalf)
-    baseline   = center,               -- VALUE-UNIT center
-    tiltOffset = tiltOffset,           -- VALUE-UNIT full-range offset (applied *rel)
-    density    = ppc,
+    shape       = shape,
+    rate        = rate,
+    amplitude   = baseHalf,             -- VALUE-UNIT half-swing (baseHalf)
+    baseline    = center,               -- VALUE-UNIT center
+    tiltOffset  = 0,                    -- native left-anchored drift: not UI-exposed (see seesawOffset)
+    seesawOffset = seesawOffset,        -- VALUE-UNIT bipolar tilt, applied *(rel-0.5)
+    density     = ppc,
     phase      = g.phase / 100,        -- slider 0..100 -> cycles 0..1 (100 = one full cycle)
     ampSkew    = g.ampSkew / 100,      -- [-1,1]
     pulseWidth = g.pulseWidth,
@@ -818,16 +822,16 @@ function M.draw(ctx, state, detected)
     reaper.ImGui_TextColored(ctx, COLOR_HINT, "Pick a shape to generate")
   end
 
-  -- Clip hint: convert the native % sliders to value units (CC lane MID=63.5, HALF=63.5)
-  -- and check whether the waveform plus the full tilt drift exceeds 0..127. center +/- baseHalf
-  -- is the un-tilted swing; +tiltOffset (full at the right edge) is the worst-case drift.
+  -- Clip hint: convert the native % sliders to value units (CC lane MID=63.5, HALF=63.5) and check
+  -- whether the waveform plus the tilt see-saw exceeds 0..127. center +/- baseHalf is the un-tilted
+  -- swing; the bipolar tilt adds +/- seesaw/2 at the edges (worst case).
   if detected and detected.target == "cc" then
     local MID, HALF, RANGE = 63.5, 63.5, 127
     local center     = MID + (g.baseline / 100) * HALF
     local baseHalf   = (g.amplitude / 100) * HALF
-    local tiltOffset = (g.tilt / 100) * RANGE
-    local lo = center - baseHalf + math.min(0, tiltOffset)
-    local hi = center + baseHalf + math.max(0, tiltOffset)
+    local tiltEdge   = math.abs((g.tilt / 100) * RANGE) / 2   -- bipolar see-saw: +/- half the offset at the edges
+    local lo = center - baseHalf - tiltEdge
+    local hi = center + baseHalf + tiltEdge
     if lo < 0 or hi > 127 then
       reaper.ImGui_TextColored(ctx, COLOR_HINT, "Values will clip to 0-127")
     end

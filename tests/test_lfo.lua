@@ -296,6 +296,36 @@ h.test("generate tilt<0 lowers right", function()
   h.truthy(downPts[#downPts].value < noTilt[#noTilt].value, "right side must be lower")
 end)
 
+-- BIPOLAR SEE-SAW tilt (the UI "Tilt" slider, via seesawOffset): pivots around the center (rel=0.5) so
+-- the left edge drops and the right rises by the SAME amount (+ tilt); center unchanged. seesaw=0 is
+-- identity, so native-match (which never sets seesawOffset) is unaffected.
+h.test("generate seesaw>0 tilts right (left down, right up, equal+opposite)", function()
+  local base = { shape = "sine", rate = { mode = "free", cycles = 4 }, amplitude = 50, baseline = 64, density = 8 }
+  local none = lfo.generate({ t0 = 0, t1 = 2 }, base)
+  local s = {}; for k, v in pairs(base) do s[k] = v end; s.seesawOffset = 25   -- edges +/- 12.5
+  local sp = lfo.generate({ t0 = 0, t1 = 2 }, s)
+  h.almost(sp[1].value - none[1].value, -12.5, 1e-6, "left edge drops half")
+  h.almost(sp[#sp].value - none[#none].value, 12.5, 1e-6, "right edge rises half")
+end)
+
+h.test("generate seesaw<0 tilts left (mirror image)", function()
+  local base = { shape = "sine", rate = { mode = "free", cycles = 4 }, amplitude = 50, baseline = 64, density = 8 }
+  local none = lfo.generate({ t0 = 0, t1 = 2 }, base)
+  local s = {}; for k, v in pairs(base) do s[k] = v end; s.seesawOffset = -25
+  local sp = lfo.generate({ t0 = 0, t1 = 2 }, s)
+  h.almost(sp[1].value - none[1].value, 12.5, 1e-6, "left edge rises")
+  h.almost(sp[#sp].value - none[#none].value, -12.5, 1e-6, "right edge drops")
+end)
+
+h.test("generate seesaw=0 is identical to no seesaw", function()
+  local base = { shape = "sine", rate = { mode = "free", cycles = 3 }, amplitude = 40, baseline = 64, density = 8 }
+  local a = lfo.generate({ t0 = 0, t1 = 2 }, base)
+  local b0 = {}; for k, v in pairs(base) do b0[k] = v end; b0.seesawOffset = 0
+  local b = lfo.generate({ t0 = 0, t1 = 2 }, b0)
+  h.eq(#a, #b)
+  for i = 1, #a do h.almost(a[i].value, b[i].value, 1e-12) end
+end)
+
 -- NATIVE MATCH: a default square (phase 0, pw 0.5) starts LOW at the cycle start and steps
 -- UP at cycle-fraction (1 - pulseWidth) — the HIGH portion is the LAST pw of each cycle
 -- (native CC4 begins at the trough; our old emitter started HIGH, the user-reported bug).
