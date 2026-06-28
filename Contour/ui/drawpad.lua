@@ -32,6 +32,24 @@ local function ease(shape, t, ten)
   return t
 end
 
+-- Index of the segment whose drawn CURVE is under the cursor, or nil. Curve-aware: the pad is a
+-- function of x, so it evaluates the segment's ease at the cursor's x and compares y — this works for
+-- already-bent segments (a plain chord test would miss them). Used for Alt-bend targeting + cursor.
+local function segUnder(points, mx, my, x0, y0, w, hgt)
+  for i = 1, #points - 1 do
+    local a, b = points[i], points[i + 1]
+    local ax, bx = x0 + a.x * w, x0 + b.x * w
+    if mx >= min(ax, bx) - 2 and mx <= max(ax, bx) + 2 then
+      local t = (bx - ax ~= 0) and (mx - ax) / (bx - ax) or 0
+      if t < 0 then t = 0 elseif t > 1 then t = 1 end
+      local yv = a.y + (b.y - a.y) * ease(a.shape or 1, t, a.tension or 0)
+      local cy = y0 + (1 - (yv + 1) / 2) * hgt
+      if abs(my - cy) <= 8 then return i end
+    end
+  end
+  return nil
+end
+
 function M.draw(ctx, points, opts)
   opts = opts or {}
   if not (reaper.ImGui_GetWindowDrawList and reaper.ImGui_DrawList_AddLine and reaper.ImGui_InvisibleButton
@@ -63,31 +81,30 @@ function M.draw(ctx, points, opts)
     end
   end
 
+  -- BEND mode = hold Alt over a line (REAPER convention): show the EW (horizontal double-arrow) cursor
+  -- on hover, and Alt+drag the segment to bow it. Without Alt, a click adds a point (anywhere, incl. on
+  -- a line). Alt only needs to be held to START the bend; the drag continues if it's released.
+  local alt = false
+  if reaper.ImGui_GetKeyMods and reaper.ImGui_Mod_Alt then
+    alt = (reaper.ImGui_GetKeyMods(ctx) & reaper.ImGui_Mod_Alt()) ~= 0
+  end
+  local hotSeg = (hovered and not hotPt) and segUnder(points, mx, my, x0, y0, w, hgt) or nil
+  if ((alt and hotSeg) or drag.seg) and reaper.ImGui_SetMouseCursor and reaper.ImGui_MouseCursor_ResizeEW then
+    reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+  end
+
   -- begin gestures on mouse-down. Skip the SECOND click of a double-click so double-clicking empty
   -- space doesn't drop a stray extra point (the double-click is handled by the delete branch below).
   if active and reaper.ImGui_IsMouseClicked(ctx, 0) and not reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
     if hotPt then drag.idx, drag.seg = hotPt, nil
+    elseif alt and hotSeg then drag.idx, drag.seg = nil, hotSeg      -- Alt+drag a segment -> bend it
     else
-      -- segment under cursor? (between two points, away from a point) -> bend; else add a point
-      local seg = nil
-      for i = 1, #points - 1 do
-        local ax, ay = toScreen(points[i].x, points[i].y, x0, y0, w, hgt)
-        local bx, by = toScreen(points[i + 1].x, points[i + 1].y, x0, y0, w, hgt)
-        if mx >= min(ax, bx) - 2 and mx <= max(ax, bx) + 2 then
-          local t = (bx - ax ~= 0) and (mx - ax) / (bx - ax) or 0
-          local ly = ay + (by - ay) * t
-          if abs(my - ly) <= 8 then seg = i; break end
-        end
-      end
-      if seg then drag.idx, drag.seg = nil, seg
-      else
-        local nx, ny = toData(mx, my, x0, y0, w, hgt)
-        points[#points + 1] = { x = nx, y = ny, shape = 1, tension = 0 }
-        local clamped = cs.clampPoints(points)
-        for k = #points, 1, -1 do points[k] = nil end
-        for k = 1, #clamped do points[k] = clamped[k] end
-        changed = true; drag.idx, drag.seg = nil, nil
-      end
+      local nx, ny = toData(mx, my, x0, y0, w, hgt)                  -- plain click -> add a point
+      points[#points + 1] = { x = nx, y = ny, shape = 1, tension = 0 }
+      local clamped = cs.clampPoints(points)
+      for k = #points, 1, -1 do points[k] = nil end
+      for k = 1, #clamped do points[k] = clamped[k] end
+      changed = true; drag.idx, drag.seg = nil, nil
     end
   end
 
