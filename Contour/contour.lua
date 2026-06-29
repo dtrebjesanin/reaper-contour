@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.0
+-- @version 1.1
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -25,7 +25,19 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   Initial release: Generate / Reduce / Transform across track envelopes, automation items, and MIDI CC.
+--   v1.1
+--   New shapes: Trapezoid, Rectified sine, Sine², Random (S&H), Drift. Saw & Triangle gain a bipolar
+--   Curve; Triangle gains Attack (movable peak). Pump & AD retired (now Saw+Curve / Triangle+Attack).
+--   Custom (draw) shape: draw your own LFO in a grid pad (add/move/delete points, Alt-drag to bend a
+--   segment), start from a built-in shape, grid density + snap, a stretchable pad, save/recall drawings,
+--   and a live ghost preview of how Swing/Steps/Smooth/Phase reshape it.
+--   Two Tilt sliders: Tilt L (anchored left) + Tilt R (anchored right).
+--   Generate presets: save/recall the whole Generate config (the drawing travels with the preset).
+--   Shaping controls grouped into Cycle shape / Across the selection.
+--   Reduce: Curve fit (keeps a curve's shape with far fewer points); Reset reliably restores the
+--   pre-reduce original across op-switch, time-selection / scope changes, and multiple lanes.
+--   Fixes: Launch Transform crash; draw-pad bezier matches REAPER's exact curve; CC per-point shapes
+--   render correctly (no stair-stepping); many Phase/Swing/Steps consistency fixes.
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua
