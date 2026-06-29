@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.1
+-- @version 1.1.1
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -25,19 +25,8 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.1
---   New shapes: Trapezoid, Rectified sine, Sine², Random (S&H), Drift. Saw & Triangle gain a bipolar
---   Curve; Triangle gains Attack (movable peak). Pump & AD retired (now Saw+Curve / Triangle+Attack).
---   Custom (draw) shape: draw your own LFO in a grid pad (add/move/delete points, Alt-drag to bend a
---   segment), start from a built-in shape, grid density + snap, a stretchable pad, save/recall drawings,
---   and a live ghost preview of how Swing/Steps/Smooth/Phase reshape it.
---   Two Tilt sliders: Tilt L (anchored left) + Tilt R (anchored right).
---   Generate presets: save/recall the whole Generate config (the drawing travels with the preset).
---   Shaping controls grouped into Cycle shape / Across the selection.
---   Reduce: Curve fit (keeps a curve's shape with far fewer points); Reset reliably restores the
---   pre-reduce original across op-switch, time-selection / scope changes, and multiple lanes.
---   Fixes: Launch Transform crash; draw-pad bezier matches REAPER's exact curve; CC per-point shapes
---   render correctly (no stair-stepping); many Phase/Swing/Steps consistency fixes.
+--   v1.1.1
+--   Smooth, eased mouse-wheel scrolling in the panel (replaces ImGui's choppy step scroll).
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua
@@ -105,6 +94,41 @@ local state = {
 
 local lastDrawErr  -- throttles the panel-error console message to once per distinct message
 
+-- Smooth in-panel scrolling. ImGui's wheel scroll snaps in discrete steps, which reads as choppy; instead
+-- we keep a target scroll position and EASE the real scroll toward it each frame, so the wheel glides.
+-- The window gets WindowFlags_NoScrollWithMouse so ImGui stops snapping; we drive ScrollY ourselves. All
+-- scroll APIs are guarded — on an older ReaImGui without them, SMOOTH_OK is false and default wheel
+-- scrolling is left on.
+local SMOOTH_OK = reaper.ImGui_GetScrollY and reaper.ImGui_SetScrollY and reaper.ImGui_GetScrollMaxY
+  and reaper.ImGui_GetMouseWheel and reaper.ImGui_WindowFlags_NoScrollWithMouse
+local SCROLL_STEP = 120    -- pixels of travel per wheel notch (more = faster traversal)
+local SCROLL_EASE = 0.50   -- 0..1 glide toward the target each frame (higher = snappier/less lag; ~32fps cap)
+local scrollTarget, scrollApplied   -- target Y, and the Y we set last frame (to detect external scrolls)
+
+-- Call right after ImGui_Begin (window must be current; runs before content is laid out so the scroll
+-- applies this frame). No-op without the APIs.
+local function smoothScroll()
+  if not SMOOTH_OK then return end
+  local maxY = reaper.ImGui_GetScrollMaxY(ctx)
+  local curY = reaper.ImGui_GetScrollY(ctx)
+  -- Resync to the live position if something ELSE moved it (scrollbar drag, keyboard, a programmatic
+  -- jump) so we glide from where it actually is instead of fighting the user.
+  if scrollTarget == nil or (scrollApplied and math.abs(curY - scrollApplied) > 1.0) then scrollTarget = curY end
+  -- Wheel -> target, only while the panel (or its content) is hovered.
+  local hovered = true
+  if reaper.ImGui_IsWindowHovered then
+    local f = reaper.ImGui_HoveredFlags_ChildWindows and reaper.ImGui_HoveredFlags_ChildWindows() or 0
+    hovered = reaper.ImGui_IsWindowHovered(ctx, f)
+  end
+  local wheel = reaper.ImGui_GetMouseWheel(ctx) or 0
+  if hovered and wheel ~= 0 then scrollTarget = scrollTarget - wheel * SCROLL_STEP end
+  if scrollTarget < 0 then scrollTarget = 0 elseif scrollTarget > maxY then scrollTarget = maxY end
+  local newY = curY + (scrollTarget - curY) * SCROLL_EASE
+  if math.abs(scrollTarget - newY) < 0.5 then newY = scrollTarget end   -- snap when essentially there
+  reaper.ImGui_SetScrollY(ctx, newY)
+  scrollApplied = newY
+end
+
 local function loop()
   local ok, detected = pcall(context.detect)
   if not ok then
@@ -125,8 +149,10 @@ local function loop()
   local sizeCond = (reaper.ImGui_Cond_Once and reaper.ImGui_Cond_Once())
     or (reaper.ImGui_Cond_FirstUseEver and reaper.ImGui_Cond_FirstUseEver()) or 0
   reaper.ImGui_SetNextWindowSize(ctx, 460, 1050, sizeCond)
-  local visible, open = reaper.ImGui_Begin(ctx, "Contour", true)
+  local beginFlags = SMOOTH_OK and reaper.ImGui_WindowFlags_NoScrollWithMouse() or 0
+  local visible, open = reaper.ImGui_Begin(ctx, "Contour", true, beginFlags)
   if visible then
+    smoothScroll()   -- ease the wheel scroll (set before content is laid out this frame)
     theme.pushFont(ctx)
     -- A panel throw must NOT brick the window. pcall keeps the outer Begin/End balanced (End always runs)
     -- and the defer loop alive; the error is surfaced once per distinct message instead of dying silently
