@@ -59,13 +59,36 @@ end
 -- The baseline persists across drags (so Reset restores the original) but is INVALIDATED on op-switch
 -- (M.cleanup) — that closes the Generate->Reduce-same-lane staleness path without a per-frame fingerprint
 -- (a fingerprint risked re-capturing from already-reduced data and breaking the Reset-restore promise).
+-- base.orig = the captured PRE-REDUCE original. base.written = what our last reduce wrote (read back),
+-- so on a fresh interaction we can tell our OWN output (keep base.orig -> Reset restores it) from an
+-- EXTERNAL edit (re-baseline). Persists across op-switch; re-validated in ensureBaseline.
 local base = { key = nil, tgt = nil, snapshot = nil, orig = nil, origCount = 0,
-               t0 = nil, t1 = nil, selectedMode = false }
+               t0 = nil, t1 = nil, selectedMode = false, written = nil }
 local gesture = { open = false, undoFlag = 4, undoLabel = "Contour: Reduce" }
 
-local function invalidateBase()
-  base.key, base.tgt, base.snapshot, base.orig = nil, nil, nil, nil
-  base.selectedMode, base.origCount = false, 0
+-- points of `all` whose time is within [a,b]
+local function regionOf(all, a, b)
+  local out = {}
+  for _, p in ipairs(all) do if p.time >= a - 1e-9 and p.time <= b + 1e-9 then out[#out + 1] = p end end
+  return out
+end
+
+-- Does the lane content `cur` equal what our last reduce wrote (base.written)? Both are reads of REAPER's
+-- stored points, so an exact-ish compare distinguishes "our own untouched output" (keep the original) from
+-- any external edit (Generate / manual — re-baseline). nil/length mismatch => not ours.
+local function laneMatchesWritten(cur)
+  local w = base.written
+  if not w or #cur ~= #w then return false end
+  for i = 1, #cur do
+    if math.abs(cur[i].time - w[i].time) > 1e-6 or math.abs(cur[i].value - w[i].value) > 1e-9 then return false end
+  end
+  return true
+end
+
+-- Record (read back) what we just wrote, so a later interaction can recognise our own output and not
+-- mistake it for a new "original". Called after every committed reduce write.
+local function recordWritten()
+  if base.tgt and base.t0 and base.t1 then base.written = base.tgt:read(base.t0, base.t1) end
 end
 
 local function baselineKey(detected, st0, st1)
@@ -90,8 +113,7 @@ local function ensureBaseline(detected, g, gestureOpen)
   if not tgt then return false, tErr or "No target" end
 
   if g.scope == SCOPE_SELECTED then
-    -- Latch the selection per gesture: the write clears point selection, so re-resolving mid-drag would
-    -- lose it. Reuse the captured base while this gesture stays open; re-read on a fresh interaction.
+    -- Fast path: keep the latched selection for the duration of an OPEN drag (no re-read).
     if gestureOpen and base.selectedMode and base.orig and base.tgt then return true end
     local all = tgt:read(nil, nil)
     local tmin, tmax, n = nil, nil, 0
@@ -102,14 +124,23 @@ local function ensureBaseline(detected, g, gestureOpen)
         if not tmax or p.time > tmax then tmax = p.time end
       end
     end
+    -- Keep the PRE-REDUCE original if the same selection still holds our own last reduce output (so Reset
+    -- after a release restores the original, not the thinned set). A moved selection / external edit fails
+    -- this and re-captures below.
+    if base.selectedMode and base.orig and tmin and base.t0
+       and math.abs(tmin - base.t0) < 1e-6 and math.abs(tmax - base.t1) < 1e-6
+       and laneMatchesWritten(tgt:read(base.t0, base.t1)) then   -- same read as recordWritten -> exact compare
+      base.tgt, base.snapshot = tgt, tgt:snapshot()   -- refresh volatile handles; keep base.orig/written
+      return true
+    end
     if n == 0 then return false, "Select some points first" end
     local snap, sErr = tgt:snapshot()
     if not snap then return false, sErr or "Snapshot failed" end
-    local orig = {}
-    for _, p in ipairs(all) do if p.time >= tmin and p.time <= tmax then orig[#orig + 1] = p end end
     base.key, base.tgt, base.snapshot = "selected", tgt, snap
     base.t0, base.t1, base.selectedMode = tmin, tmax, true
-    base.orig, base.origCount = orig, #orig
+    base.orig = regionOf(all, tmin, tmax)
+    base.origCount = #base.orig
+    base.written = nil
     return true
   end
 
@@ -117,13 +148,22 @@ local function ensureBaseline(detected, g, gestureOpen)
   local st0, st1 = common.spanFor(tgt, detected, g)
   if not (st0 and st1 and st1 > st0) then return false, "Empty range" end
   local key = baselineKey(detected, st0, st1)
-  if base.key == key and base.orig and not base.selectedMode then return true end
+  -- Fast path: continuing an OPEN drag on the same key (no re-read).
+  if gestureOpen and base.key == key and base.orig and not base.selectedMode then return true end
+  -- Keep the PRE-REDUCE original if the lane still holds our own last reduce output — even across an
+  -- op-switch (we no longer hard-invalidate). Re-baseline only when the lane changed for a reason other
+  -- than our reduce (different target/span = key change, or an external edit = written mismatch).
+  if base.key == key and base.orig and not base.selectedMode and laneMatchesWritten(tgt:read(st0, st1)) then
+    base.tgt, base.snapshot = tgt, tgt:snapshot()     -- refresh volatile handles; keep base.orig/written
+    return true
+  end
   local snap, sErr = tgt:snapshot()
   if not snap then return false, sErr or "Snapshot failed" end
   base.key, base.tgt, base.snapshot = key, tgt, snap
   base.t0, base.t1, base.selectedMode = st0, st1, false
   base.orig = tgt:read(st0, st1)
   base.origCount = #base.orig
+  base.written = nil
   return true
 end
 
@@ -174,6 +214,7 @@ local function endGesture(committed)
     reaper.Undo_EndBlock2(0, "", 0)
   end
   gesture.open = false
+  recordWritten()   -- remember our output so a later Reset/op-switch return keeps the true original
 end
 
 -- Called from contour.lua atexit / window-close and on op switch. Closes a dangling block AND clears
@@ -183,8 +224,11 @@ function M.cleanup()
     markCCDirty(base.tgt)
     reaper.Undo_EndBlock2(0, gesture.undoLabel, gesture.undoFlag)
     gesture.open = false
+    recordWritten()
   end
-  invalidateBase()
+  -- Keep the baseline across op-switch / window-close: returning to Reduce re-validates it against the
+  -- lane (ensureBaseline), so Reset still restores the true pre-reduce original unless the lane was edited
+  -- externally. (Previously this hard-invalidated, which made Reset restore the already-reduced data.)
 end
 
 -- Can a write run for this scope right now (selection check is deferred to ensureBaseline)?
@@ -330,6 +374,7 @@ function M.run(state, detected, g)
   local _, label = undoMetaFor(detected.target)
   local n, wErr = base.tgt:write(reduced, base.t0, base.t1, { rawShape = true, undoLabel = label })
   if not n then fail(wErr or "Write failed") return end
+  recordWritten()   -- remember our output so a later Reset keeps the true original
   ok(("Reduced %d -> %d points"):format(base.origCount, #reduced))
 end
 
