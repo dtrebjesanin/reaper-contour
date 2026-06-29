@@ -140,4 +140,25 @@ h.test("REGRESSION #4: a shape-only external edit re-baselines (Reset does NOT r
   h.truthy(allFive, "Reset must NOT revert a shape-only external edit (laneMatchesWritten must see shape)")
 end)
 
+h.test("REGRESSION: Time->Selected scope switch keeps the original (Reset restores it)", function()
+  local E = freshEnv(); reduce.cleanup(); seed(E, 20, 0, 4, false)   -- reduced first in Time-selection scope
+  local g = { amount = 80, scope = 0, curveFit = false }
+  reduce.run({}, det(E), g); h.truthy(#pts(E) < 20, "time-sel reduced to " .. #pts(E))
+  for _, p in ipairs(pts(E)) do p.sel = true end                     -- user switches to Selected scope + selects
+  reduce.run({}, det(E), { amount = 0, scope = 2, curveFit = false })  -- Reset in Selected scope
+  h.eq(#pts(E), 20, "a Time->Selected scope switch must not discard the original (Reset restores 20)")
+end)
+
+h.test("REGRESSION: a continuously-reused baseline survives the LRU cap (bump on reuse)", function()
+  local A = freshEnv(); reduce.cleanup(); seed(A, 20, 0, 4)
+  local g = { amount = 80, scope = 0, curveFit = false }
+  reduce.run({}, det(A), g)
+  for _ = 1, 80 do                                  -- touch 80 other lanes (> the 64 cap)...
+    local L = freshEnv(); seed(L, 6, 0, 4); reduce.run({}, det(L), g)
+    reduce.run({}, det(A), g)                       -- ...re-reducing A each time, which must bump its LRU slot
+  end
+  reduce.run({}, det(A), { amount = 0, scope = 0, curveFit = false })  -- Reset A
+  h.eq(#pts(A), 20, "a reused baseline must not be evicted by the cap (Reset still restores 20)")
+end)
+
 h.run()

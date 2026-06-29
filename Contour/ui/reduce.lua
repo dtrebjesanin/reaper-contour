@@ -68,12 +68,12 @@ local gesture = { open = false, undoFlag = 4, undoLabel = "Contour: Reduce" }
 -- another lane doesn't clobber this one; `written` lets us tell our own untouched output (keep the
 -- original -> Reset restores it) from an external edit (re-baseline). A small FIFO cap bounds the map.
 local store, order, STORE_CAP = {}, {}, 64
-local function setStore(key, entry)
-  for i, k in ipairs(order) do if k == key then table.remove(order, i); break end end  -- LRU: bump to newest
+local function bumpLRU(key)   -- move key to newest; evict the oldest entry past the cap
+  for i, k in ipairs(order) do if k == key then table.remove(order, i); break end end
   order[#order + 1] = key
   if #order > STORE_CAP then local old = table.remove(order, 1); store[old] = nil end
-  store[key] = entry
 end
+local function setStore(key, entry) bumpLRU(key); store[key] = entry end
 
 -- points of `all` whose time is within [a,b]
 local function regionOf(all, a, b)
@@ -106,6 +106,21 @@ local function pointsMatch(cur, ref)
     if math.abs((a.tension or 0) - (b.tension or 0)) > 1e-6 then return false end
   end
   return true
+end
+
+-- Resolve the pristine whole-lane original for `key`, given the working span [a,b] and the current lane
+-- read `all`. PRESERVE the stored original (bumping its LRU slot) when the lane region [a,b] still holds
+-- our last reduce output — this is scope-INDEPENDENT, so it survives op-switch, span/scope changes, AND a
+-- Time->Selected scope switch. Otherwise capture `all` as the new original. Returns (whole, storedEntry).
+local function resolveWhole(key, all, a, b)
+  local e = store[key]
+  if e and e.whole and e.written and pointsMatch(regionOf(all, a, b), regionOf(e.written, a, b)) then
+    bumpLRU(key)
+    return e.whole, e
+  end
+  e = { whole = all, written = nil }
+  setStore(key, e)
+  return all, e
 end
 
 -- Per-target key — lane identity only (span deliberately excluded; the whole-lane original in `store`
@@ -150,10 +165,10 @@ local function ensureBaseline(detected, g, gestureOpen)
 
     local e = store[key]
     -- Is the lane (over the STORED selection span) still our own last reduce output? Then the live
-    -- selection only shrank to survivors because WE reduced it — reuse the stored original selection.
+    -- selection only shrank to survivors because WE reduced it — reuse the latched original selection.
     local ours = e and e.whole and e.written and e.selTimes and e.selSpan
       and pointsMatch(regionOf(all, e.selSpan[1], e.selSpan[2]), regionOf(e.written, e.selSpan[1], e.selSpan[2]))
-    -- A genuinely NEW selection (a point picked outside the stored set, beyond a tick of tolerance)
+    -- A genuinely NEW selection (a point picked outside the latched set, beyond a tick of tolerance)
     -- re-baselines so the user can reduce a different selection.
     local newSel = false
     if ours and #cur > 0 then
@@ -165,6 +180,7 @@ local function ensureBaseline(detected, g, gestureOpen)
     end
 
     if ours and not newSel then
+      bumpLRU(key)
       base.t0, base.t1 = e.selSpan[1], e.selSpan[2]
       base.orig = tagSelected(regionOf(e.whole, base.t0, base.t1), e.selTimes)
     else
@@ -175,9 +191,13 @@ local function ensureBaseline(detected, g, gestureOpen)
         if not tmin or t < tmin then tmin = t end
         if not tmax or t > tmax then tmax = t end
       end
+      -- Preserve the pristine original if the lane over this span is still our last output (covers a
+      -- Time->Selected scope switch on an already-reduced lane); else capture the current lane. Then latch
+      -- the new selection onto it.
+      local whole, prev = resolveWhole(key, all, tmin, tmax)
       base.t0, base.t1 = tmin, tmax
-      base.orig = tagSelected(regionOf(all, tmin, tmax), selTimes)
-      setStore(key, { whole = all, written = nil, selSpan = { tmin, tmax }, selTimes = selTimes })
+      base.orig = tagSelected(regionOf(whole, tmin, tmax), selTimes)
+      setStore(key, { whole = whole, written = prev and prev.written or nil, selSpan = { tmin, tmax }, selTimes = selTimes })
     end
     base.key, base.tgt, base.snapshot, base.selectedMode = key, tgt, snap, true
     base.origCount = #base.orig
@@ -192,22 +212,12 @@ local function ensureBaseline(detected, g, gestureOpen)
   local snap, sErr = tgt:snapshot()
   if not snap then return false, sErr or "Snapshot failed" end
 
-  -- Resolve the WHOLE-lane original for this target. Reuse the stored original if the WORKING REGION still
-  -- holds our last reduce output (validated against the same region of `written`, so an edit elsewhere on
-  -- the lane can't lose it). Otherwise (first reduce, or this region was edited externally) (re)capture the
-  -- current lane as the new original.
-  local e = store[key]
-  local wholeNow = tgt:read(nil, nil)
-  local stillOurs = e and e.whole and e.written
-    and pointsMatch(regionOf(wholeNow, st0, st1), regionOf(e.written, st0, st1))
-  if not stillOurs then
-    e = { whole = wholeNow, written = nil }
-    setStore(key, e)
-  end
-
+  -- Reuse the stored pristine original if the working region still holds our last reduce output (preserved
+  -- scope-independently by resolveWhole); otherwise capture the current lane as the new original.
+  local whole = resolveWhole(key, tgt:read(nil, nil), st0, st1)
   base.key, base.tgt, base.snapshot = key, tgt, snap
   base.t0, base.t1, base.selectedMode = st0, st1, false
-  base.orig = regionOf(e.whole, st0, st1)   -- the original points within the working span
+  base.orig = regionOf(whole, st0, st1)   -- the original points within the working span
   base.origCount = #base.orig
   return true
 end
