@@ -55,16 +55,26 @@ local function undoMetaFor(t)
   return -1, "Contour: Reduce envelope"
 end
 
--- base: the captured pristine points. base.selectedMode marks the latched-per-gesture selected scope.
--- The baseline persists across drags (so Reset restores the original) but is INVALIDATED on op-switch
--- (M.cleanup) — that closes the Generate->Reduce-same-lane staleness path without a per-frame fingerprint
--- (a fingerprint risked re-capturing from already-reduced data and breaking the Reset-restore promise).
--- base.orig = the captured PRE-REDUCE original. base.written = what our last reduce wrote (read back),
--- so on a fresh interaction we can tell our OWN output (keep base.orig -> Reset restores it) from an
--- EXTERNAL edit (re-baseline). Persists across op-switch; re-validated in ensureBaseline.
+-- The active working set for the current interaction: base.orig = the PRE-REDUCE original points within
+-- the working span [t0,t1] (a slice of the whole-lane original). reducedAt thins it; Reset (0%) writes it
+-- back verbatim. tgt/snapshot are volatile and refreshed on every fresh interaction.
 local base = { key = nil, tgt = nil, snapshot = nil, orig = nil, origCount = 0,
-               t0 = nil, t1 = nil, selectedMode = false, written = nil }
+               t0 = nil, t1 = nil, selectedMode = false }
 local gesture = { open = false, undoFlag = 4, undoLabel = "Contour: Reduce" }
+
+-- Per-TARGET baseline store (NOT per-span): keyed by lane identity, each entry keeps the WHOLE-lane
+-- original (`whole`) and a read-back of the whole lane after our last reduce (`written`). Keying by target
+-- means changing the time selection / scope still finds the original; one entry per lane means reducing
+-- another lane doesn't clobber this one; `written` lets us tell our own untouched output (keep the
+-- original -> Reset restores it) from an external edit (re-baseline). A small FIFO cap bounds the map.
+local store, order, STORE_CAP = {}, {}, 64
+local function setStore(key, entry)
+  if store[key] == nil then
+    order[#order + 1] = key
+    if #order > STORE_CAP then local old = table.remove(order, 1); store[old] = nil end
+  end
+  store[key] = entry
+end
 
 -- points of `all` whose time is within [a,b]
 local function regionOf(all, a, b)
@@ -73,97 +83,103 @@ local function regionOf(all, a, b)
   return out
 end
 
--- Does the lane content `cur` equal what our last reduce wrote (base.written)? Both are reads of REAPER's
--- stored points, so an exact-ish compare distinguishes "our own untouched output" (keep the original) from
--- any external edit (Generate / manual — re-baseline). nil/length mismatch => not ours.
-local function laneMatchesWritten(cur)
-  local w = base.written
-  if not w or #cur ~= #w then return false end
+-- Do point lists `cur` and `ref` match? Both are reads of REAPER's stored points, so an exact-ish compare
+-- on EVERY stored field (time, value, shape, tension) distinguishes our own untouched output from any
+-- external edit — including a shape/tension-only edit (which earlier slipped through and let Reset revert it).
+local function pointsMatch(cur, ref)
+  if not ref or #cur ~= #ref then return false end
   for i = 1, #cur do
-    if math.abs(cur[i].time - w[i].time) > 1e-6 or math.abs(cur[i].value - w[i].value) > 1e-9 then return false end
+    local a, b = cur[i], ref[i]
+    if math.abs(a.time - b.time) > 1e-6 or math.abs(a.value - b.value) > 1e-9 then return false end
+    if (a.shape or 1) ~= (b.shape or 1) then return false end
+    if math.abs((a.tension or 0) - (b.tension or 0)) > 1e-6 then return false end
   end
   return true
 end
 
--- Record (read back) what we just wrote, so a later interaction can recognise our own output and not
--- mistake it for a new "original". Called after every committed reduce write.
-local function recordWritten()
-  if base.tgt and base.t0 and base.t1 then base.written = base.tgt:read(base.t0, base.t1) end
-end
-
-local function baselineKey(detected, st0, st1)
+-- Per-target key — lane identity only (span deliberately excluded; the whole-lane original in `store`
+-- covers any span, so changing the time selection / scope no longer loses the original).
+local function targetKey(detected)
   local d = detected.details or {}
-  local id
   if detected.target == "cc" then
     local lane = (d.midiEditor and reaper.MIDIEditor_GetSetting_int
       and reaper.MIDIEditor_GetSetting_int(d.midiEditor, "last_clicked_cc_lane")) or -1
-    id = "cc:" .. tostring(d.take) .. ":" .. tostring(lane)
+    return "cc:" .. tostring(d.take) .. ":" .. tostring(lane)
   elseif detected.target == "ai" then
-    id = "ai:" .. tostring(d.env) .. ":" .. tostring(d.aiIndex)
-  else
-    id = "env:" .. tostring(d.env)
+    return "ai:" .. tostring(d.env) .. ":" .. tostring(d.aiIndex)
   end
-  return ("%s@%.4f,%.4f"):format(id, st0 or 0, st1 or 0)
+  return "env:" .. tostring(d.env)
 end
 
--- Ensure `base` holds the pristine points to reduce. `gestureOpen` lets the selected scope latch its
--- selection for the duration of a drag. Returns true or (false, errString).
+-- Record (read back) the WHOLE lane after a committed write, so a later interaction recognises our own
+-- output and keeps the stored original. Called after every committed reduce write (gesture end / M.run).
+local function recordWritten()
+  if base.tgt and base.key and store[base.key] then store[base.key].written = base.tgt:read(nil, nil) end
+end
+
+-- Ensure `base` holds the pristine points to reduce. `gestureOpen` lets a drag keep the latched working set
+-- without re-reading. Returns true or (false, errString).
 local function ensureBaseline(detected, g, gestureOpen)
   local tgt, tErr = target.fromContext(detected)
   if not tgt then return false, tErr or "No target" end
+  local key = targetKey(detected)
 
+  -- Working span [t0,t1] for this reduce (selected scope derives it from the current selection). selTimes
+  -- captures WHICH points are selected NOW (by time), so thinning targets the live selection even when the
+  -- stored original was captured under a different selection.
+  local t0, t1, selMode, selTimes
   if g.scope == SCOPE_SELECTED then
-    -- Fast path: keep the latched selection for the duration of an OPEN drag (no re-read).
-    if gestureOpen and base.selectedMode and base.orig and base.tgt then return true end
+    if gestureOpen and base.selectedMode and base.orig and base.tgt and base.key == key then return true end
     local all = tgt:read(nil, nil)
     local tmin, tmax, n = nil, nil, 0
+    selTimes = {}
     for _, p in ipairs(all) do
-      if p.sel then
-        n = n + 1
+      if p.sel then n = n + 1
+        selTimes[string.format("%.6f", p.time)] = true
         if not tmin or p.time < tmin then tmin = p.time end
-        if not tmax or p.time > tmax then tmax = p.time end
-      end
-    end
-    -- Keep the PRE-REDUCE original if the same selection still holds our own last reduce output (so Reset
-    -- after a release restores the original, not the thinned set). A moved selection / external edit fails
-    -- this and re-captures below.
-    if base.selectedMode and base.orig and tmin and base.t0
-       and math.abs(tmin - base.t0) < 1e-6 and math.abs(tmax - base.t1) < 1e-6
-       and laneMatchesWritten(tgt:read(base.t0, base.t1)) then   -- same read as recordWritten -> exact compare
-      base.tgt, base.snapshot = tgt, tgt:snapshot()   -- refresh volatile handles; keep base.orig/written
-      return true
+        if not tmax or p.time > tmax then tmax = p.time end end
     end
     if n == 0 then return false, "Select some points first" end
-    local snap, sErr = tgt:snapshot()
-    if not snap then return false, sErr or "Snapshot failed" end
-    base.key, base.tgt, base.snapshot = "selected", tgt, snap
-    base.t0, base.t1, base.selectedMode = tmin, tmax, true
-    base.orig = regionOf(all, tmin, tmax)
-    base.origCount = #base.orig
-    base.written = nil
-    return true
+    t0, t1, selMode = tmin, tmax, true
+  else
+    local st0, st1 = common.spanFor(tgt, detected, g)
+    if not (st0 and st1 and st1 > st0) then return false, "Empty range" end
+    if gestureOpen and not base.selectedMode and base.orig and base.key == key then return true end
+    t0, t1, selMode = st0, st1, false
   end
 
-  -- Range scopes: persistent baseline keyed by target identity + span.
-  local st0, st1 = common.spanFor(tgt, detected, g)
-  if not (st0 and st1 and st1 > st0) then return false, "Empty range" end
-  local key = baselineKey(detected, st0, st1)
-  -- Fast path: continuing an OPEN drag on the same key (no re-read).
-  if gestureOpen and base.key == key and base.orig and not base.selectedMode then return true end
-  -- Keep the PRE-REDUCE original if the lane still holds our own last reduce output — even across an
-  -- op-switch (we no longer hard-invalidate). Re-baseline only when the lane changed for a reason other
-  -- than our reduce (different target/span = key change, or an external edit = written mismatch).
-  if base.key == key and base.orig and not base.selectedMode and laneMatchesWritten(tgt:read(st0, st1)) then
-    base.tgt, base.snapshot = tgt, tgt:snapshot()     -- refresh volatile handles; keep base.orig/written
-    return true
-  end
   local snap, sErr = tgt:snapshot()
   if not snap then return false, sErr or "Snapshot failed" end
+
+  -- Resolve the WHOLE-lane original for this target. Reuse the stored original if the WORKING REGION still
+  -- holds our last reduce output (validated against the same region of `written`, so an edit elsewhere on
+  -- the lane can't lose it). Otherwise (first reduce, or this region was edited externally) (re)capture the
+  -- current lane as the new original.
+  local e = store[key]
+  local wholeNow = tgt:read(nil, nil)
+  local stillOurs = e and e.whole and e.written
+    and pointsMatch(regionOf(wholeNow, t0, t1), regionOf(e.written, t0, t1))
+  if not stillOurs then
+    e = { whole = wholeNow, written = nil }
+    setStore(key, e)
+  end
+
   base.key, base.tgt, base.snapshot = key, tgt, snap
-  base.t0, base.t1, base.selectedMode = st0, st1, false
-  base.orig = tgt:read(st0, st1)
+  base.t0, base.t1, base.selectedMode = t0, t1, selMode
+  -- base.orig = the ORIGINAL values within the working span. In selected scope, re-tag each point's `sel`
+  -- from the LIVE selection (selTimes) — the stored original may have been captured under a different
+  -- selection, and thinning must follow what the user has selected now.
+  local region = regionOf(e.whole, t0, t1)
+  if selMode then
+    base.orig = {}
+    for _, p in ipairs(region) do
+      base.orig[#base.orig + 1] = { time = p.time, value = p.value, shape = p.shape, tension = p.tension,
+        sel = selTimes[string.format("%.6f", p.time)] or false }
+    end
+  else
+    base.orig = region
+  end
   base.origCount = #base.orig
-  base.written = nil
   return true
 end
 
