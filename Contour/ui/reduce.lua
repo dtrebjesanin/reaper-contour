@@ -69,10 +69,9 @@ local gesture = { open = false, undoFlag = 4, undoLabel = "Contour: Reduce" }
 -- original -> Reset restores it) from an external edit (re-baseline). A small FIFO cap bounds the map.
 local store, order, STORE_CAP = {}, {}, 64
 local function setStore(key, entry)
-  if store[key] == nil then
-    order[#order + 1] = key
-    if #order > STORE_CAP then local old = table.remove(order, 1); store[old] = nil end
-  end
+  for i, k in ipairs(order) do if k == key then table.remove(order, i); break end end  -- LRU: bump to newest
+  order[#order + 1] = key
+  if #order > STORE_CAP then local old = table.remove(order, 1); store[old] = nil end
   store[key] = entry
 end
 
@@ -80,6 +79,18 @@ end
 local function regionOf(all, a, b)
   local out = {}
   for _, p in ipairs(all) do if p.time >= a - 1e-9 and p.time <= b + 1e-9 then out[#out + 1] = p end end
+  return out
+end
+
+-- Clone `region` points, tagging each `sel` from a selected-time set keyed by "%.6f". Used by selected
+-- scope so base.orig carries the ORIGINAL selection (the points the user picked), independent of whatever
+-- is selected on the lane right now (a prior reduce leaves only the survivors selected).
+local function tagSelected(region, selSet)
+  local out = {}
+  for _, p in ipairs(region) do
+    out[#out + 1] = { time = p.time, value = p.value, shape = p.shape, tension = p.tension,
+      sel = selSet[string.format("%.6f", p.time)] or false }
+  end
   return out
 end
 
@@ -124,29 +135,59 @@ local function ensureBaseline(detected, g, gestureOpen)
   if not tgt then return false, tErr or "No target" end
   local key = targetKey(detected)
 
-  -- Working span [t0,t1] for this reduce (selected scope derives it from the current selection). selTimes
-  -- captures WHICH points are selected NOW (by time), so thinning targets the live selection even when the
-  -- stored original was captured under a different selection.
-  local t0, t1, selMode, selTimes
+  -- SELECTED scope. The trap: reducing leaves only the SURVIVORS selected, so re-reading the live
+  -- selection after a reduce would mistake the survivors for "the selection" and bring the thinned-away
+  -- points back / collapse the selection. Instead we LATCH the original selection (span + selected times)
+  -- in the store and keep re-deriving from it for as long as the lane still holds our own output — so
+  -- Reset / Curve-fit / amount changes re-reduce the ORIGINAL selection, exactly like Time-selection scope.
   if g.scope == SCOPE_SELECTED then
     if gestureOpen and base.selectedMode and base.orig and base.tgt and base.key == key then return true end
+    local snap, sErr = tgt:snapshot()
+    if not snap then return false, sErr or "Snapshot failed" end
     local all = tgt:read(nil, nil)
-    local tmin, tmax, n = nil, nil, 0
-    selTimes = {}
-    for _, p in ipairs(all) do
-      if p.sel then n = n + 1
-        selTimes[string.format("%.6f", p.time)] = true
-        if not tmin or p.time < tmin then tmin = p.time end
-        if not tmax or p.time > tmax then tmax = p.time end end
+    local cur = {}
+    for _, p in ipairs(all) do if p.sel then cur[#cur + 1] = p.time end end
+
+    local e = store[key]
+    -- Is the lane (over the STORED selection span) still our own last reduce output? Then the live
+    -- selection only shrank to survivors because WE reduced it — reuse the stored original selection.
+    local ours = e and e.whole and e.written and e.selTimes and e.selSpan
+      and pointsMatch(regionOf(all, e.selSpan[1], e.selSpan[2]), regionOf(e.written, e.selSpan[1], e.selSpan[2]))
+    -- A genuinely NEW selection (a point picked outside the stored set, beyond a tick of tolerance)
+    -- re-baselines so the user can reduce a different selection.
+    local newSel = false
+    if ours and #cur > 0 then
+      for _, t in ipairs(cur) do
+        local hit = false
+        for st in pairs(e.selTimes) do if math.abs(t - tonumber(st)) <= 1e-3 then hit = true; break end end
+        if not hit then newSel = true; break end
+      end
     end
-    if n == 0 then return false, "Select some points first" end
-    t0, t1, selMode = tmin, tmax, true
-  else
-    local st0, st1 = common.spanFor(tgt, detected, g)
-    if not (st0 and st1 and st1 > st0) then return false, "Empty range" end
-    if gestureOpen and not base.selectedMode and base.orig and base.key == key then return true end
-    t0, t1, selMode = st0, st1, false
+
+    if ours and not newSel then
+      base.t0, base.t1 = e.selSpan[1], e.selSpan[2]
+      base.orig = tagSelected(regionOf(e.whole, base.t0, base.t1), e.selTimes)
+    else
+      if #cur == 0 then return false, "Select some points first" end
+      local selTimes, tmin, tmax = {}, nil, nil
+      for _, t in ipairs(cur) do
+        selTimes[string.format("%.6f", t)] = true
+        if not tmin or t < tmin then tmin = t end
+        if not tmax or t > tmax then tmax = t end
+      end
+      base.t0, base.t1 = tmin, tmax
+      base.orig = tagSelected(regionOf(all, tmin, tmax), selTimes)
+      setStore(key, { whole = all, written = nil, selSpan = { tmin, tmax }, selTimes = selTimes })
+    end
+    base.key, base.tgt, base.snapshot, base.selectedMode = key, tgt, snap, true
+    base.origCount = #base.orig
+    return true
   end
+
+  -- RANGE scopes (Time selection / Entire item).
+  local st0, st1 = common.spanFor(tgt, detected, g)
+  if not (st0 and st1 and st1 > st0) then return false, "Empty range" end
+  if gestureOpen and not base.selectedMode and base.orig and base.key == key then return true end
 
   local snap, sErr = tgt:snapshot()
   if not snap then return false, sErr or "Snapshot failed" end
@@ -158,27 +199,15 @@ local function ensureBaseline(detected, g, gestureOpen)
   local e = store[key]
   local wholeNow = tgt:read(nil, nil)
   local stillOurs = e and e.whole and e.written
-    and pointsMatch(regionOf(wholeNow, t0, t1), regionOf(e.written, t0, t1))
+    and pointsMatch(regionOf(wholeNow, st0, st1), regionOf(e.written, st0, st1))
   if not stillOurs then
     e = { whole = wholeNow, written = nil }
     setStore(key, e)
   end
 
   base.key, base.tgt, base.snapshot = key, tgt, snap
-  base.t0, base.t1, base.selectedMode = t0, t1, selMode
-  -- base.orig = the ORIGINAL values within the working span. In selected scope, re-tag each point's `sel`
-  -- from the LIVE selection (selTimes) — the stored original may have been captured under a different
-  -- selection, and thinning must follow what the user has selected now.
-  local region = regionOf(e.whole, t0, t1)
-  if selMode then
-    base.orig = {}
-    for _, p in ipairs(region) do
-      base.orig[#base.orig + 1] = { time = p.time, value = p.value, shape = p.shape, tension = p.tension,
-        sel = selTimes[string.format("%.6f", p.time)] or false }
-    end
-  else
-    base.orig = region
-  end
+  base.t0, base.t1, base.selectedMode = st0, st1, false
+  base.orig = regionOf(e.whole, st0, st1)   -- the original points within the working span
   base.origCount = #base.orig
   return true
 end

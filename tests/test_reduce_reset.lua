@@ -75,6 +75,31 @@ h.test("Reset in Selected-points scope restores the original", function()
   h.eq(#pts(E), 20, "Reset in selected scope must restore the 20 original points")
 end)
 
+-- Selected scope must behave like Time-selection: changing the method/amount re-reduces the ORIGINAL
+-- selection (it must not bring the thinned-away points back), and Reset restores + re-selects the original.
+h.test("Selected scope: toggling Curve fit at a level re-reduces (does NOT bring points back)", function()
+  local E = freshEnv(); reduce.cleanup(); seed(E, 20, 0, 4, true)
+  local g = { amount = 50, scope = 2, curveFit = false }
+  reduce.run({}, det(E), g); h.truthy(#pts(E) < 20, "RDP reduced to " .. #pts(E))
+  g.curveFit = true; reduce.run({}, det(E), g)
+  h.truthy(#pts(E) < 20, "toggling curve fit must re-reduce, not restore all 20 (got " .. #pts(E) .. ")")
+end)
+
+h.test("Selected scope: Reset restores ALL points + re-selects them (so a follow-up reduce still thins)", function()
+  -- a lone interior spike: RDP keeps {start, spike, end}; the survivors do NOT cover the selection,
+  -- which is exactly what exposed the selection-collapse bug.
+  local E = freshEnv(); reduce.cleanup(); lanes[E] = {}
+  for i = 0, 14 do pts(E)[#pts(E) + 1] = { time = i / 14 * 4, value = (i == 7) and 0.9 or 0.0, shape = 0, tension = 0, sel = true } end
+  local g = { amount = 70, scope = 2, curveFit = false }
+  reduce.run({}, det(E), g); h.truthy(#pts(E) < 15, "reduced to " .. #pts(E))
+  g.amount = 0; reduce.run({}, det(E), g)
+  h.eq(#pts(E), 15, "Reset must restore all 15 original points")
+  local selN = 0; for _, p in ipairs(pts(E)) do if p.sel then selN = selN + 1 end end
+  h.eq(selN, 15, "Reset must re-select the original selection (not just the survivors)")
+  g.amount = 70; reduce.run({}, det(E), g)
+  h.truthy(#pts(E) < 15, "a follow-up reduce after Reset must thin again (selection not collapsed), got " .. #pts(E))
+end)
+
 h.test("an external edit between reduces re-baselines (Reset restores the NEW content)", function()
   local E = freshEnv(); reduce.cleanup(); seed(E, 20, 0, 4)
   local g = { amount = 80, scope = 0, curveFit = false }
