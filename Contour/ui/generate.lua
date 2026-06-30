@@ -672,10 +672,12 @@ function M.draw(ctx, state, detected)
       reaper.ImGui_EndCombo(ctx)
     end
 
-    -- Re-roll (v2.1 U2): only meaningful for the Random / S&H shape. Assigns a NEW
-    -- seed so a fresh pattern generates. The seed stays STABLE while dragging other
-    -- sliders, so random doesn't jump around as you tweak amplitude etc.
-    if currentShapeId(g) == "random" then
+    -- Re-roll (v2.1 U2): meaningful for the stochastic shapes — Random / S&H AND Drift, which
+    -- share one per-cycle random emitter + seed (generateRandom). Assigns a NEW seed so a fresh
+    -- pattern generates. The seed stays STABLE while dragging other sliders, so the pattern doesn't
+    -- jump around as you tweak amplitude etc.
+    local rollShape = currentShapeId(g)
+    if rollShape == "random" or rollShape == "drift" then
       reaper.ImGui_SameLine(ctx)
       if reaper.ImGui_Button(ctx, "Re-roll##gen_reroll") then
         g.seed = math.random(1, 2147483647)  -- 2^31-1

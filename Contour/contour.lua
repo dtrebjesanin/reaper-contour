@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.1.1
+-- @version 1.1.2
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -25,8 +25,9 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.1.1
---   Smooth, eased mouse-wheel scrolling in the panel (replaces ImGui's choppy step scroll).
+--   v1.1.2
+--   Re-roll now works for the Drift shape too (previously Random / S&H only), so its random
+--   pattern can be reshuffled instead of being fixed for the session.
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua
