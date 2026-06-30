@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.1.2
+-- @version 1.1.3
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -25,9 +25,9 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.1.2
---   Re-roll now works for the Drift shape too (previously Random / S&H only), so its random
---   pattern can be reshuffled instead of being fixed for the session.
+--   v1.1.3
+--   Fixed: scrolling the wheel over an open dropdown no longer scrolls the whole panel. The
+--   dropdown list now gets the wheel as expected.
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua
@@ -115,10 +115,17 @@ local function smoothScroll()
   -- Resync to the live position if something ELSE moved it (scrollbar drag, keyboard, a programmatic
   -- jump) so we glide from where it actually is instead of fighting the user.
   if scrollTarget == nil or (scrollApplied and math.abs(curY - scrollApplied) > 1.0) then scrollTarget = curY end
-  -- Wheel -> target, only while the panel (or its content) is hovered.
+  -- Wheel -> target, only while the panel (or its content) is hovered. NoPopupHierarchy is the key
+  -- bit: ChildWindows alone also counts a COMBO/MENU POPUP spawned by this window as "hovered"
+  -- (ImGui treats the popup's emitter as its parent), so scrolling an OPEN dropdown would scroll the
+  -- panel and steal the wheel from the list. NoPopupHierarchy excludes popups. If that flag is
+  -- missing on an older ReaImGui, fall back to default flags (0), which already exclude popups (an
+  -- open popup blocks window hover) — so the dropdown-scroll bug stays fixed either way.
   local hovered = true
   if reaper.ImGui_IsWindowHovered then
-    local f = reaper.ImGui_HoveredFlags_ChildWindows and reaper.ImGui_HoveredFlags_ChildWindows() or 0
+    local child = reaper.ImGui_HoveredFlags_ChildWindows and reaper.ImGui_HoveredFlags_ChildWindows()
+    local nopop = reaper.ImGui_HoveredFlags_NoPopupHierarchy and reaper.ImGui_HoveredFlags_NoPopupHierarchy()
+    local f = (child and nopop) and (child | nopop) or 0
     hovered = reaper.ImGui_IsWindowHovered(ctx, f)
   end
   local wheel = reaper.ImGui_GetMouseWheel(ctx) or 0
