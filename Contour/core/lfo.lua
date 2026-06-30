@@ -247,6 +247,20 @@ local function emitAnchored(shape, t0, t1, spanLen, totalCycles, p, amp, baseV, 
     return 2
   end
 
+  -- Edge-anchor shape. The span edges sit at an ARBITRARY shape-phase (-phase at rel 0, N-phase at
+  -- rel 1) rather than on a sampled extremum/mid, so an edge's OUTGOING segment must take the CC shape
+  -- of the QUARTER it lands in (the same idea rectsine uses with easeAt). Only PARAMETRIC varies per
+  -- quarter: extrema-led quarters (0,2) -> fast end (4); mid-led quarters (1,3) -> fast start (3).
+  -- sine/sine² are slow-start/end (2) everywhere and triangle is uniform, so for those this equals
+  -- shapeFor(0). The old code hardcoded shapeFor(0), so the parametric edge flipped 4<->3 as phase
+  -- pushed interior samples across the boundary — the curve "changing form" once a point went out.
+  local function edgeShapeFor(phasePos)
+    if shape ~= "parametric" then return shapeFor(0) end
+    local f = phasePos - floor(phasePos)
+    local q = floor(f * 4 + 1e-9)              -- quarter index 0..3
+    return (q % 2 == 0) and 4 or 3
+  end
+
   -- Collect {rel, sv, shp, ten}. A sample at phase position pp = c + swingWarp(sp) has time-progress
   -- prog = (pp + phase)/N which must lie in the OPEN (0,1) (the 0/1 edges are anchors).
   local samp = {}
@@ -260,8 +274,8 @@ local function emitAnchored(shape, t0, t1, spanLen, totalCycles, p, amp, baseV, 
   end
   -- Span-edge anchors. warpInverse(0)=0, warpInverse(1)=1, so the shape-phase at the edges is
   -- -phase (rel 0) and N-phase (rel 1); value = waveVal(shapePhase).
-  samp[#samp + 1] = { rel = 0, sv = waveVal(-phase), shp = shapeFor(0), ten = triTension }
-  samp[#samp + 1] = { rel = 1, sv = waveVal(N - phase), shp = shapeFor(0), ten = triTension }
+  samp[#samp + 1] = { rel = 0, sv = waveVal(-phase), shp = edgeShapeFor(-phase), ten = triTension }
+  samp[#samp + 1] = { rel = 1, sv = waveVal(N - phase), shp = edgeShapeFor(N - phase), ten = triTension }
 
   table.sort(samp, function(a, b) return a.rel < b.rel end)
 
@@ -478,18 +492,21 @@ local function generateCustom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSk
     local y = (cp[1] and cp[1].y) or 0
     local pts = {}; emit(pts, 0, y, 1, 0); emit(pts, 1, y, 1, 0); return pts
   end
-  -- linear value of the custom curve at shape-phase x (span-edge anchors only; per-segment SHAPE is
-  -- carried on the emitted points, not recomputed here).
-  local function valAtX(x)
+  -- shape + tension of the SEGMENT that contains shape-phase x. When phase shifts the left-edge anchor
+  -- into the middle of a curved segment, its outgoing piece must CONTINUE that segment's curve, not
+  -- default to the first point's shape (which straightened a curved segment to a line at the edge).
+  -- HALF-OPEN exactly like customshape.valueAt: AT a breakpoint (the edge landing on a drawn point) use
+  -- the segment STARTING there (the OUTGOING piece), never the one ending there — otherwise the edge
+  -- ease flips to the opposite curvature at that one point (alternating-ease shapes like a Parametric
+  -- starter show it as a curve "switching direction" when a point meets the edge).
+  local function segAtX(x)
     x = x - floor(x)
     for i = 1, #cp - 1 do
-      if x >= cp[i].x - 1e-12 and x <= cp[i + 1].x + 1e-12 then
-        local w = cp[i + 1].x - cp[i].x
-        local t = (w > 1e-9) and (x - cp[i].x) / w or 0
-        return cp[i].y + (cp[i + 1].y - cp[i].y) * t
+      if x < cp[i + 1].x - 1e-12 or i == #cp - 1 then
+        return cp[i].shape or 1, cp[i].tension or 0
       end
     end
-    return cp[#cp].y
+    return cp[#cp].shape or 1, cp[#cp].tension or 0
   end
   local eps = math.min(1e-4, 0.25 / N)
   local samp = {}
@@ -510,10 +527,18 @@ local function generateCustom(t0, t1, spanLen, totalCycles, p, amp, baseV, ampSk
       samp[#samp + 1] = { rel = relB + eps, y = cp[1].y, shp = cp[1].shape or 1, ten = cp[1].tension or 0 } -- this cycle start (x=0)
     end
   end
-  samp[#samp + 1] = { rel = 0, y = valAtX(-phase), shp = cp[1].shape or 1, ten = cp[1].tension or 0 }
+  -- Edge VALUES ride the TRUE drawn curve (customshape.valueAt: bezier/ease/step/linear), exactly like
+  -- the built-in emitters use the exact waveform value at the span edges. This makes a phased custom
+  -- match its built-in equivalent — e.g. a Parametric STARTER is byte-identical to the Parametric shape
+  -- at the edge — instead of sitting on a straight chord. The outgoing SHAPE+tension comes from segAtX
+  -- (half-open: the segment STARTING at the edge). NOTE: a clipped BEZIER sub-arc still can't be one
+  -- same-tension segment, so a small curvature residual remains on hand-drawn shape-5 segments; but the
+  -- edge now starts ON the curve, and ease/linear/step segments (every built-in starter) are exact.
+  local e0shp, e0ten = segAtX(-phase)
+  samp[#samp + 1] = { rel = 0, y = customshape.valueAt(cp, -phase), shp = e0shp, ten = e0ten }
   -- rel=1 is the span END: at an exact cycle boundary use the cycle-END value (cp[#cp].y), not the
-  -- wrapped cycle-START that valAtX would return.
-  local function valEnd(x) local fx = x - floor(x); if fx < 1e-12 then return cp[#cp].y end return valAtX(x) end
+  -- wrapped cycle-START that valueAt would return.
+  local function valEnd(x) local fx = x - floor(x); if fx < 1e-12 then return cp[#cp].y end return customshape.valueAt(cp, x) end
   samp[#samp + 1] = { rel = 1, y = valEnd(N - phase), shp = 1, ten = 0 }
   table.sort(samp, function(a, b) return a.rel < b.rel end)
   local pts, lastRel = {}, nil

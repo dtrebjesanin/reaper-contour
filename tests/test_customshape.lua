@@ -236,4 +236,66 @@ h.test("clampPoints rounds shape fractional values and handles nil shape", funct
   h.eq(onePt(nil)[1].shape, 1,  "nil defaults to 1")
 end)
 
+-- REGRESSION (phase + curve): when phase shifts the LEFT edge into the middle of a CURVED segment,
+-- the edge anchor must carry THAT segment's shape + tension so the visible partial curve stays curved.
+-- Old code hardcoded cp[1]'s shape, so a curved segment pushed against the edge by phase straightened
+-- into a line once an endpoint went out of bounds (the user-reported custom-draw bug).
+h.test("custom left-edge anchor keeps the curved segment's shape + tension under phase", function()
+  local function gen(phase)
+    return lfo.generate({ t0 = 0, t1 = 3 }, { shape = "custom",
+      rate = { mode = "free", cycles = 3 }, amplitude = 1, baseline = 0, phase = phase,
+      customPoints = {
+        { x = 0,   y = 0,  shape = 1, tension = 0 },     -- linear segment 0 -> 0.5
+        { x = 0.5, y = 1,  shape = 5, tension = 0.5 },   -- CURVED (bezier) segment 0.5 -> 1
+        { x = 1,   y = -1, shape = 1, tension = 0 },
+      } })
+  end
+  -- phase 0: left edge sits on cp[1], inside the first (linear) segment -> shape 1, tension 0
+  local p0 = gen(0)
+  h.eq(p0[1].shape, 1, "phase 0: edge on the linear first segment")
+  h.eq(p0[1].tension or 0, 0, "phase 0: tension 0")
+  -- phase 0.3: left edge at shape-phase 0.7, INSIDE the curved segment (0.5..1) -> must stay bezier
+  local p1 = gen(0.3)
+  h.eq(p1[1].shape, 5, "phase 0.3: edge inside the curved segment stays bezier (5), does not straighten")
+  h.almost(p1[1].tension or 0, 0.5, 1e-9, "phase 0.3: edge keeps the curved segment's tension")
+end)
+
+-- REGRESSION (phase + curve, BREAKPOINT case): when phase lands the left edge EXACTLY on a drawn point
+-- (e.g. a Parametric starter loaded into the pad, whose eases ALTERNATE fast-end/fast-start), the edge's
+-- outgoing segment must take the shape of the segment STARTING there, not the one ending there. The old
+-- inclusive interval returned the incoming segment, so the curve flipped to the opposite curvature at
+-- that one point as two points met at the edge (the user-reported Parametric-in-Custom bug).
+h.test("custom edge on a breakpoint takes the OUTGOING segment shape (no direction flip)", function()
+  -- Parametric-style points: alternating fast-end (4) / fast-start (3), breakpoints at 0.25/0.5/0.75.
+  local cp = {
+    { x = 0,    y = -1, shape = 4, tension = 0 },
+    { x = 0.25, y = 0,  shape = 3, tension = 0 },
+    { x = 0.5,  y = 1,  shape = 4, tension = 0 },   -- peak; OUTGOING segment 0.5->0.75 is shape 4
+    { x = 0.75, y = 0,  shape = 3, tension = 0 },
+    { x = 1,    y = -1, shape = 4, tension = 0 },
+  }
+  -- phase 0.5 -> edge at shape-phase 0.5, exactly on the peak. Outgoing = shape 4; incoming (0.25->0.5)
+  -- is shape 3. The edge anchor must report 4, not 3.
+  local pts = lfo.generate({ t0 = 0, t1 = 2 }, { shape = "custom",
+    rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, phase = 0.5, customPoints = cp })
+  h.eq(pts[1].shape, 4, "edge on a breakpoint uses the segment STARTING there (4), not ending there (3)")
+end)
+
+-- EQUIVALENCE (the user-reported divergence): a custom shape built from the Parametric STARTER must
+-- match the built-in Parametric at the span edge under the SAME phase. The starter's eases reproduce
+-- -cos exactly, so with edge values taken from the true curve (not a chord) the two paths emit the same
+-- leftmost point. This locks the custom edge to the built-in reference.
+h.test("custom Parametric starter matches the built-in Parametric at the edge under phase", function()
+  local starters = require("core.starters")
+  local cp = starters.points("parametric")
+  for _, phase in ipairs({ 0.1, 0.37, 0.61, 0.8 }) do
+    local builtin = lfo.generate({ t0 = 0, t1 = 2 },
+      { shape = "parametric", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, phase = phase })
+    local custom = lfo.generate({ t0 = 0, t1 = 2 },
+      { shape = "custom", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, phase = phase, customPoints = cp })
+    h.almost(custom[1].value, builtin[1].value, 1e-9, "edge VALUE matches built-in (phase " .. phase .. ")")
+    h.eq(custom[1].shape, builtin[1].shape, "edge SHAPE matches built-in (phase " .. phase .. ")")
+  end
+end)
+
 h.run()

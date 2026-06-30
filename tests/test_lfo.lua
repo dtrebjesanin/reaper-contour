@@ -443,6 +443,22 @@ h.test("native per-point shapes: sine=slow start/end, parametric=fast-end/fast-s
   for _, p in ipairs(sq) do h.eq(p.shape, 0) end
 end)
 
+-- REGRESSION (phase + curve): the span-EDGE anchor's CC shape must follow the QUARTER it lands in as
+-- phase shifts it across the waveform, not stay pinned to shapeFor(0). Parametric alternates fast-end
+-- (4) on extrema-led quarters (0,2) and fast-start (3) on mid-led quarters (1,3), so the left edge's
+-- shape MUST change with phase. Pinning it caused the user-reported "parametric curve changes form
+-- once a point goes out of bounds": the edge flipped character whenever an interior sample crossed out.
+h.test("parametric edge shape tracks phase (the quarter it lands in), not a fixed value", function()
+  local function leftShape(phase)
+    local pts = lfo.generate({ t0 = 0, t1 = 1 },
+      { shape = "parametric", rate = { mode = "free", cycles = 2 }, amplitude = 1, baseline = 0, phase = phase })
+    return pts[1].shape   -- pts[1] is the rel=0 edge anchor (smallest rel after the sort)
+  end
+  h.eq(leftShape(0),   4, "phase 0: left edge on the trough extremum -> fast end (4); native-unchanged")
+  h.eq(leftShape(0.1), 3, "phase 0.1: edge at shape-phase 0.9 (mid-led quarter 3) -> fast start (3)")
+  h.eq(leftShape(0.4), 4, "phase 0.4: edge at shape-phase 0.6 (extremum-led quarter 2) -> fast end (4)")
+end)
+
 -- Saw stays SPARSE under freqSkew (warped ramp, not densely sampled) — user-reported regression.
 h.test("saw with freqSkew stays sparse and linear", function()
   local pts = lfo.generate({ t0 = 0, t1 = 1 },
