@@ -55,6 +55,9 @@ function M.reset()
     { ppq = 1.0 * M.PPQ, chan = 0, lane = M.CC_LANE, val = 64, shape = 1, tension = 0, sel = true },
     { ppq = 3.0 * M.PPQ, chan = 0, lane = M.CC_LANE, val = 90, shape = 1, tension = 0, sel = true },
   }
+  -- The MIDI item chunk ccSetup parses. Default: ONE visible CC lane (the active one) + a CFGEDITVIEW
+  -- (leftTick 0, pxPerTick 1.0). Multi-lane tests overwrite this with a stacked-VELLANE chunk.
+  M.itemChunk = ("CFGEDITVIEW 0 1.0 0 0 0\nVELLANE %d 90 0\n"):format(M.CC_LANE)
 end
 M.reset()
 
@@ -79,6 +82,9 @@ R.ImGui_GetWindowDrawList     = function() return "DL" end   -- opaque handle; D
 R.ImGui_GetMouseWheel         = function() return 0 end
 R.ImGui_GetKeyMods            = function() return 0 end
 R.ImGui_GetVersion            = function() return "0.9.3" end
+-- native<->ImGui point conversion. Identity here = Windows-standard-DPI (native == ImGui). A
+-- macOS/HiDPI test overrides this to flip/scale and assert the overlay still maps onto the lane.
+R.ImGui_PointConvertNative    = function(_ctx, x, y) return x, y end
 
 -- ---- Value-echo widgets: real ReaImGui returns (changed, currentValue) and the panels write it back
 -- UNCONDITIONALLY (`changed, g.x = SliderInt(...)`), so the stub MUST echo the passed-in value (arg 3)
@@ -164,6 +170,7 @@ R.GetEnvelopeInfo_Value = function(_e, key)
 end
 R.GetMediaTrackInfo_Value = function(_t, key)
   if key == "I_TCPSCREENY" then return 100 end
+  if key == "I_TCPY"       then return 120 end   -- track Y relative to arrange top (overlay laneRect)
   return 0
 end
 
@@ -188,10 +195,10 @@ R.MIDIEditor_GetSetting_int = function() return M.CC_LANE end   -- last_clicked_
 R.MIDI_GetPPQPosFromProjTime = function(_t, sec) return sec * M.PPQ end
 R.MIDI_GetProjTimeFromPPQPos = function(_t, ppq) return ppq / M.PPQ end
 R.ValidatePtr2 = function() return true end
--- A minimal-but-VALID MIDI item chunk so the overlay's ccSetup parses a single CC lane: exactly one
--- VELLANE line (lane CC_LANE, height 90) + a CFGEDITVIEW (leftTick 0, pxPerTick 1.0).
+-- The MIDI item chunk the overlay's ccSetup parses — configurable via M.itemChunk (reset() restores
+-- the single-lane default) so multi-lane VELLANE stacks are testable.
 R.GetItemStateChunk = function()
-  return true, ("CFGEDITVIEW 0 1.0 0 0 0\nVELLANE %d 90 0\n"):format(M.CC_LANE)
+  return true, M.itemChunk
 end
 
 -- ---- MIDI CC: a minimal STATEFUL event engine so CC:write round-trips like real REAPER -----------

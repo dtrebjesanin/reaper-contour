@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.1.4
+-- @version 1.1.5
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -25,15 +25,14 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.1.4
---   Phase + curved shapes: fixed how curves render at the selection edges when Phase pushes points
---   across the boundary. Parametric no longer flips its curve as a point crosses the edge, custom
---   drawn curves no longer straighten or switch direction, and a custom shape built from a built-in
---   starter (e.g. Parametric) now matches that built-in at the edge.
---   Known tradeoff (sparse vs dense): a hand-drawn bezier segment clipped by the edge can still show a
---   slight curvature difference. The output is kept sparse (few, clean points) rather than densifying
---   the edge to trace the clipped curve exactly, so a small residual on strongly curved edge segments
---   is expected.
+--   v1.1.5
+--   Transform: works with multiple CC lanes visible in the MIDI editor — the tool maps and edits the
+--   active (last-clicked) lane's own strip instead of refusing.
+--   Transform: fixed the overlay position on macOS and HiDPI displays (the box, handles and panel now
+--   land on the lane for envelopes, automation items and CC).
+--   Transform: the floating panel can be dragged anywhere by an empty spot (for that session;
+--   double-click an empty spot to send it back) and collapsed to a slim strip with the -/+ button.
+--   Transform: refuses cleanly at launch when the take can't be read, instead of failing every write.
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua

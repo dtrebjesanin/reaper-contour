@@ -187,4 +187,29 @@ overlaySmoke(detEnv(), "envelope")
 overlaySmoke(detAI(),  "automation item")
 overlaySmoke(detCC(),  "MIDI CC")   -- reaches the CC coordinate frame (ppq<->x, lane height) + CC writeback
 
+-- Same overlay smoke, but with a NON-identity native<->ImGui conversion (simulates a macOS Y-flip plus a
+-- HiDPI scale) so the coordinate-conversion path runs: the corner min/max ordering, the signed CC span,
+-- and the derived x-scale. Correct on-screen POSITION still needs a real macOS/4K check; this only proves
+-- the flip/scale math executes cleanly (no divide-by-zero, nil, or bad swap) across env/AI/CC.
+local function overlayFlipSmoke(det, name)
+  h.test("overlay: " .. name .. " under macOS-style flipped + scaled coords (no crash)", function()
+    stub.reset()
+    local saved = reaper.ImGui_PointConvertNative
+    reaper.ImGui_PointConvertNative = function(_ctx, x, y) return x * 1.5, 1000 - y * 1.5 end  -- 1.5x scale + Y-flip
+    local ok, err = pcall(function()
+      overlay.params = { knob = 20, shape = "sine", symmetrical = true, flipMode = "relative" }
+      local started = overlay.start(CTX, det)
+      h.truthy(started, "start under flipped coords")
+      overlay.frame(CTX); overlay.frame(CTX)
+      overlay._pendingOneShot = "flip"; overlay.frame(CTX)
+      overlay.finish()
+    end)
+    reaper.ImGui_PointConvertNative = saved     -- always restore, even if the body threw
+    h.truthy(ok, "flipped-coords overlay threw: " .. tostring(err))
+  end)
+end
+overlayFlipSmoke(detEnv(), "envelope")
+overlayFlipSmoke(detAI(),  "automation item")
+overlayFlipSmoke(detCC(),  "MIDI CC")
+
 h.run()

@@ -70,6 +70,20 @@ end
 
 local g = nil  -- gesture state table while armed
 
+-- ReaImGui draws in a TOP-DOWN, DPI-scaled coordinate space on every platform, but REAPER's native APIs
+-- (JS_Window_*, track I_TCPSCREENY, GetSet_ArrangeView2) hand back OS-NATIVE screen coords: bottom-up on
+-- macOS, and unscaled on HiDPI/4K. Feeding native coords straight to ImGui put the box/handles/HUD in the
+-- wrong place (vertically inverted on macOS, offset on 4K). ImGui_PointConvertNative maps native -> ImGui,
+-- correcting the macOS Y-flip AND the Windows/Linux DPI scale in one call. Guarded: on an older ReaImGui
+-- without it, fall back to identity (native == ImGui, the historical Windows-standard-DPI behavior).
+local function toImGui(ctx, x, y)
+  if reaper.ImGui_PointConvertNative then
+    local cx, cy = reaper.ImGui_PointConvertNative(ctx, x, y)
+    if cx and cy then return cx, cy end   -- nil-safe: never crash the overlay if the API returns nothing
+  end
+  return x, y
+end
+
 -- arrange trackview client rect (screen coords) + width.
 local function trackviewRect()
   local main = reaper.GetMainHwnd()
@@ -80,22 +94,53 @@ local function trackviewRect()
   return { l = l, t = t, r = r, b = b, w = r - l, h = b - t }
 end
 
--- envelope lane screen rect (yTop/yBot) for a TRACK envelope.
+-- envelope lane rect for a TRACK envelope, as an ARRANGE-RELATIVE top offset + height (NOT screen coords).
+-- On macOS I_TCPSCREENY is in a different coordinate system than the JS_Window trackview rect (top-down vs
+-- bottom-up, different origin), so screen coords for the lane can't be reconciled with the (correctly
+-- converted) trackview. I_TCPY + I_TCPY_USED is arrange-relative and platform-consistent; the caller adds
+-- it to the converted trackview top (scaled by the trackview height ratio for HiDPI).
 local function laneRect(env)
   local track = reaper.GetEnvelopeInfo_Value(env, "P_TRACK")
   if not track then return nil end
-  local sy = reaper.GetMediaTrackInfo_Value(track, "I_TCPSCREENY")
-  local ly = reaper.GetEnvelopeInfo_Value(env, "I_TCPY_USED")
+  local ty = reaper.GetMediaTrackInfo_Value(track, "I_TCPY")        -- track TCP Y, relative to arrange top
+  local ly = reaper.GetEnvelopeInfo_Value(env, "I_TCPY_USED")       -- envelope offset within the track TCP
   local lh = reaper.GetEnvelopeInfo_Value(env, "I_TCPH_USED")
   if not lh or lh <= 0 then return nil end
-  return { yTop = sy + ly, yBot = sy + ly + lh }
+  return { topOff = (ty or 0) + (ly or 0), h = lh }
+end
+
+-- All visible CC-area lanes from the item chunk's VELLANE lines: { {lane=int, h=px}, ... } in chunk
+-- order, which is the on-screen order TOP to BOTTOM (the lane stack sits at the BOTTOM of the midiview,
+-- so the LAST entry's bottom edge is the midiview bottom). lane ids: 0..127 = CC#; -1 = velocity;
+-- >= 128 = pitch/program/etc. special lanes — not editable targets here, but their heights still
+-- position the lanes around them.
+local function parseVellanes(chunk)
+  local lanes = {}
+  for ln, hh in chunk:gmatch("VELLANE%s+(%-?%d+)%s+(%d+)") do
+    lanes[#lanes + 1] = { lane = tonumber(ln), h = tonumber(hh) }
+  end
+  return lanes
+end
+
+-- The active lane's slot in the stack: (height, bottomOffset), where bottomOffset = the summed heights
+-- of the lanes BELOW it (listed after it) = how far its bottom edge sits above the midiview bottom.
+-- A single visible lane (or the bottom lane of a stack) has offset 0. nil if the lane isn't in the stack.
+local function laneSlot(lanes, lane)
+  local idx
+  for i, e in ipairs(lanes) do if e.lane == lane then idx = i; break end end
+  if not idx then return nil end
+  local off = 0
+  for i = idx + 1, #lanes do off = off + lanes[i].h end
+  return lanes[idx].h, off
 end
 
 -- MIDI CC coordinate setup (juliansader's CFGEDITVIEW/VELLANE approach, decoded from a live editor):
 --   CFGEDITVIEW field 1 = leftmost tick at the midiview's left edge; field 2 = pixels per tick.
---   VELLANE <lane> <height> = the active CC lane's pixel height.
--- Read ONCE at launch (the overlay then locks the view by capturing input); the midiview RECT is re-read
--- live each frame in M.frame, so moving/resizing the editor still tracks. midiview = child id 1001 (0x3E9).
+--   VELLANE lines (one per visible lane, top-to-bottom) = each lane's pixel height.
+-- Multiple visible lanes are supported: the tool maps the ACTIVE (last-clicked) lane's own strip via its
+-- slot in the VELLANE stack (laneSlot). Read ONCE at launch (the overlay then locks the view by capturing
+-- input); the midiview RECT is re-read live each frame in M.frame, so moving/resizing the editor still
+-- tracks. midiview = child id 1001 (0x3E9).
 local function ccSetup(detected, lane)
   local me   = detected.details and detected.details.midiEditor
   local take = detected.details and detected.details.take
@@ -107,21 +152,21 @@ local function ccSetup(detected, lane)
   if not item then return nil, "no media item" end
   local okc, chunk = reaper.GetItemStateChunk(item, "", false)  -- NB: keep on its own line — `item and f()` truncates f's 2 returns to 1
   if not (okc and chunk) then return nil, "no item chunk" end
-  -- Single visible CC lane only for now: with stacked lanes the active lane is not bottom-anchored, so the
-  -- value<->Y mapping (which assumes laneBottom = midiview bottom) would be miscalibrated. Refuse cleanly
-  -- rather than silently mis-edit. (Proper multi-lane stacking is a known TODO.)
-  local laneCount = 0
-  for _ in chunk:gmatch("VELLANE%s+%-?%d+%s+%d+") do laneCount = laneCount + 1 end
-  if laneCount > 1 then return nil, "show only ONE CC lane (hide the others), then relaunch" end
   local leftTick, pxPerTick = chunk:match("CFGEDITVIEW%s+(%-?[%d%.]+)%s+(%-?[%d%.]+)")
   if not (leftTick and pxPerTick) then return nil, "no CFGEDITVIEW" end
-  -- Active lane height from its VELLANE line; fall back to the FIRST VELLANE (the only lane, single-lane case).
-  local laneHeight = chunk:match("VELLANE%s+" .. tostring(lane) .. "%s+(%d+)")
-                     or chunk:match("VELLANE%s+%-?%d+%s+(%d+)")
-  if not laneHeight then return nil, "no VELLANE" end
-  leftTick, pxPerTick, laneHeight = tonumber(leftTick), tonumber(pxPerTick), tonumber(laneHeight)
-  if not (pxPerTick and pxPerTick ~= 0 and laneHeight and laneHeight > 0) then return nil, "bad view numbers" end
-  return { midiview = mv, leftTick = leftTick, pxPerTick = pxPerTick, laneHeight = laneHeight }
+  local lanes = parseVellanes(chunk)
+  if #lanes == 0 then return nil, "no VELLANE" end
+  local laneHeight, laneBottomOff = laneSlot(lanes, lane)
+  if not laneHeight then
+    -- The clicked lane isn't among the VISIBLE lanes (e.g. it was hidden after being clicked): refuse
+    -- with guidance rather than silently mapping the box onto a different lane's strip. (This replaces
+    -- the old fall-back-to-first-VELLANE, which could aim the box at a lane the data isn't on.)
+    return nil, ("CC %d isn't a visible lane — click its lane in the editor, then relaunch"):format(lane)
+  end
+  leftTick, pxPerTick = tonumber(leftTick), tonumber(pxPerTick)
+  if not (pxPerTick and pxPerTick ~= 0 and laneHeight > 0) then return nil, "bad view numbers" end
+  return { midiview = mv, leftTick = leftTick, pxPerTick = pxPerTick,
+           laneHeight = laneHeight, laneBottomOff = laneBottomOff }
 end
 
 -- Read in-scope points (raw STORAGE values), tagged with their envelope index, for the explicit scope:
@@ -209,6 +254,11 @@ function M.start(ctx, detected)
   -- so it matches the raw point values directly — same domain Reduce/Generate use. No ScaleFrom/To.
   local vlo, vhi = tgt:valueRange()
   if vhi < vlo then vlo, vhi = vhi, vlo end
+  -- The pristine snapshot every write rebuilds from. Without it EVERY write would fail with only the
+  -- tiny "write failed" HUD status, so refuse to start instead. (Only CC's MIDI_GetAllEvts can actually
+  -- fail; env/AI snapshots are inert markers.)
+  local snap, snapErr = tgt:snapshot()
+  if not snap then return false, "Take snapshot failed: " .. tostring(snapErr) end
   -- Points OUTSIDE the transformed region — re-written unchanged each frame so they're preserved when a
   -- stretch's widened delete-range sweeps over them.
   local keep = {}
@@ -221,11 +271,12 @@ function M.start(ctx, detected)
   end
   g = { detected = detected, scope = scope, tgt = tgt, env = detected.details.env,
         orig = region, keep = keep, t0 = t0, t1 = t1, vlo = vlo, vhi = vhi,
-        snap = tgt:snapshot(), zone = nil,
+        snap = snap, zone = nil,
         -- CC coordinate frame (env/AI leave these nil and use the arrange-lane path):
         isCC = (detected.target == "cc"), take = detected.details.take,
         midiview = cc and cc.midiview, ccLeftTick = cc and cc.leftTick,
         ccPxPerTick = cc and cc.pxPerTick, ccLaneHeight = cc and cc.laneHeight,
+        ccLaneBottomOff = (cc and cc.laneBottomOff) or 0,  -- summed heights of the lanes BELOW the active one (0 = bottom/only lane)
         ccTopInset = 11, ccBottomInset = 1.5,  -- CC lane top-header / bottom-border px padding (values 127/0 sit inside the lane)
         -- Undo: CC needs UNDO_STATE_ITEMS(4) + a MarkTrackItemsDirty per edit (point changes aren't captured
         -- by flag -1 alone); env/AI use UNDO_STATE_ALL(-1). Mirrors ui/generate.lua's live-gesture undo.
@@ -237,6 +288,10 @@ function M.start(ctx, detected)
         -- extent ever written this session (so widening stretches/warps leave no stray points behind).
         pristine = dcopy(region), pristineKeep = dcopy(keep), everMin = t0, everMax = t1 }
   g.knob = M.params.knob; g.shape = M.params.shape; g.symmetrical = M.params.symmetrical
+  -- HUD starts collapsed if the user left it that way last time (toggled in the draw block; persisted).
+  -- The panel POSITION is deliberately NOT persisted: every launch starts at its default spot (off the
+  -- box's top-right corner); dragging parks it for this session only (g.hudUser dies with the tool).
+  g.hudCollapsed = reaper.GetExtState("Contour", "tr_hudcollapsed") == "1"
   -- Undo is per-DRAG (opened on grab, closed on release), not per session — so each stretch/tilt is its
   -- own clean undo point rather than the whole session collapsing into one coarse undo.
   return true
@@ -341,6 +396,9 @@ local function chord(ctx, mods, key)
   return reaper.ImGui_IsKeyChordPressed and reaper.ImGui_IsKeyChordPressed(ctx, mods | key)
 end
 
+-- HUD view margin (px): the panel never sits closer than this to the view edges.
+local HUD_M = 4
+
 function M.frame(ctx)
   if not g then return false end
   if g then g.knob = M.params.knob; g.shape = M.params.shape; g.symmetrical = M.params.symmetrical end
@@ -385,7 +443,9 @@ function M.frame(ctx)
       markEditDirty()
       reaper.Undo_EndBlock2(0, "Contour: Transform " .. op, g.undoFlag)
       g.orig = newPts
-      resyncSnap()  -- CC: refresh off the just-written take so a later edit can't resurrect removed points
+      -- CC: refresh off the just-written take so a later edit can't resurrect removed points. If the
+      -- re-snapshot fails (take gone/broken), end the tool cleanly — the edit is already committed.
+      if not resyncSnap() then return false end
       g.status = (op == "reverse") and "Reversed"
         or (op == "flip") and ("Flipped (" .. (M.params.flipMode or "absolute") .. ")")
         or "Reset to first state"
@@ -398,24 +458,53 @@ function M.frame(ctx)
   if g.isCC then
     local okr, l, t, r, b = reaper.JS_Window_GetClientRect(g.midiview)
     if not okr then return true end
-    tvr = { l = l, t = t, r = r, b = b, w = r - l, h = b - t }
-    local valBot = b - g.ccBottomInset                  -- screen Y of CC value 0
-    local valTop = b - g.ccLaneHeight + g.ccTopInset    -- screen Y of CC value 127
-    local span = valBot - valTop
-    if span <= 0 then return true end  -- degenerate (lane too short to map); skip this frame, don't invert
-    X    = function(tt) return l + (reaper.MIDI_GetPPQPosFromProjTime(g.take, tt) - g.ccLeftTick) * g.ccPxPerTick end
-    xToT = function(x)  return reaper.MIDI_GetProjTimeFromPPQPos(g.take, g.ccLeftTick + (x - l) / g.ccPxPerTick) end
-    Y    = function(v)  return (g.vhi == g.vlo) and valBot or (valBot - (v - g.vlo) / (g.vhi - g.vlo) * span) end
-    yToV = function(y)  return g.vlo + (valBot - y) / span * (g.vhi - g.vlo) end
+    -- Native -> ImGui (macOS Y-flip + HiDPI): convert the midiview corners, then derive x/y scales.
+    local il, it = toImGui(ctx, l, t)
+    local ir, ib = toImGui(ctx, r, b)
+    if it > ib then it, ib = ib, it end
+    local ilx, irx = math.min(il, ir), math.max(il, ir)
+    local xScale = (r ~= l) and ((irx - ilx) / (r - l)) or 1
+    local yScale = (b ~= t) and (math.abs(ib - it) / math.abs(b - t)) or 1
+    -- CC value edges computed IN ImGui SPACE (top-down): the ACTIVE lane's strip sits ccLaneBottomOff
+    -- native px above the midiview BOTTOM (the summed heights of the lanes below it in the VELLANE stack;
+    -- 0 when it's the bottom/only lane — identical to the old single-lane mapping). Value 0 sits just
+    -- above the strip's bottom, value 127 a lane-height above that. Working from the converted `ib` keeps
+    -- the macOS bottom-up flip handled; native px offsets/insets scale to ImGui px via yScale.
+    local ivalBot = ib - (g.ccLaneBottomOff + g.ccBottomInset) * yScale
+    local ivalTop = ib - (g.ccLaneBottomOff + g.ccLaneHeight - g.ccTopInset) * yScale
+    local ispan = ivalBot - ivalTop
+    if ispan <= 0 then return true end
+    tvr = { l = ilx, t = it, r = irx, b = ib, w = irx - ilx, h = ib - it }
+    local pxPerTick = g.ccPxPerTick * xScale
+    X    = function(tt) return ilx + (reaper.MIDI_GetPPQPosFromProjTime(g.take, tt) - g.ccLeftTick) * pxPerTick end
+    xToT = function(x)  return reaper.MIDI_GetProjTimeFromPPQPos(g.take, g.ccLeftTick + (x - ilx) / pxPerTick) end
+    Y    = function(v)  return (g.vhi == g.vlo) and ivalBot or (ivalBot - (v - g.vlo) / (g.vhi - g.vlo) * ispan) end
+    yToV = function(y)  return g.vlo + (ivalBot - y) / ispan * (g.vhi - g.vlo) end
   else
     local vt0, vt1
     tvr, vt0, vt1 = viewNow()
     local lr = laneRect(g.env)
     if not tvr or not lr or vt1 <= vt0 then return true end
-    X    = function(tt) return ac.timeToX(tt, vt0, vt1, tvr.l, tvr.r) end
-    xToT = function(x)  return ac.xToTime(x, vt0, vt1, tvr.l, tvr.r) end
-    Y    = function(v)  return ac.valueToY(v, g.vlo, g.vhi, lr.yTop, lr.yBot) end
-    yToV = function(y)  return ac.yToValue(y, g.vlo, g.vhi, lr.yTop, lr.yBot) end
+    -- Native -> ImGui (macOS Y-flip + HiDPI): convert the trackview corners and the lane's yTop/yBot, then
+    -- build the maps in ImGui space. viewNow already consumed the NATIVE l/r for GetSet_ArrangeView2, so
+    -- converting here doesn't disturb the time lookup. min/max keeps top<bottom whichever way the platform
+    -- orders the converted corners.
+    local il, iTop = toImGui(ctx, tvr.l, tvr.t)
+    local ir, iBot = toImGui(ctx, tvr.r, tvr.b)
+    if il > ir then il, ir = ir, il end
+    if iTop > iBot then iTop, iBot = iBot, iTop end
+    -- Lane Y from the ARRANGE-RELATIVE offset (see laneRect), scaled into ImGui px by the trackview
+    -- height ratio (=1 non-HiDPI) and added to the converted trackview top. Avoids the I_TCPSCREENY
+    -- coordinate-system mismatch that pushed the box off-screen on macOS.
+    local nativeH = math.abs(tvr.b - tvr.t)
+    local scaleY  = (nativeH > 0) and (math.abs(iBot - iTop) / nativeH) or 1
+    local iyTop = iTop + lr.topOff * scaleY
+    local iyBot = iyTop + lr.h * scaleY
+    tvr = { l = il, t = iTop, r = ir, b = iBot, w = ir - il, h = iBot - iTop }
+    X    = function(tt) return ac.timeToX(tt, vt0, vt1, il, ir) end
+    xToT = function(x)  return ac.xToTime(x, vt0, vt1, il, ir) end
+    Y    = function(v)  return ac.valueToY(v, g.vlo, g.vhi, iyTop, iyBot) end
+    yToV = function(y)  return ac.yToValue(y, g.vlo, g.vhi, iyTop, iyBot) end
   end
   local b = bounds(g.orig)
   local x0,x1 = X(b.tmin), X(b.tmax)
@@ -423,15 +512,23 @@ function M.frame(ctx)
   local cy = (yt+yb)/2
   local cx = (x0+x1)/2
 
-  -- HUD panel geometry (drawn later, INSIDE the overlay window). Anchored just off the selection box's
-  -- TOP-RIGHT corner — its bottom-left sits a touch up-and-right of that corner, so it rides next to the
-  -- shape (above the lane content). Clamped so it never spills past the view edges.
-  local HUDW, HUDH = 250, 236
-  local hudX = x1 + 14
-  if hudX + HUDW > tvr.r - 4 then hudX = tvr.r - 4 - HUDW end
-  if hudX < tvr.l + 4 then hudX = tvr.l + 4 end
-  local hudY = yt - HUDH - 16
-  if hudY < tvr.t + 4 then hudY = tvr.t + 4 end
+  -- HUD panel geometry (drawn later, INSIDE the overlay window). Its home is the ORIGINAL spot: just
+  -- off the selection BOX's top-right corner (rides next to the shape), clamped into the view — so in
+  -- a short editor / tall lane it can still land on the box. That's what DRAG (session-only) and the
+  -- collapse strip are for (see the draw block). The rect is also what hudBusy protects.
+  local HUDW, HUDH = 250, g.hudCollapsed and 28 or 236
+  local hudX, hudY
+  if g.hudUser then
+    -- session-parked position (view-relative + clamped) beats the default spot
+    hudX = math.max(tvr.l + HUD_M, math.min(tvr.r - HUD_M - HUDW, tvr.l + g.hudUser.x))
+    hudY = math.max(tvr.t + HUD_M, math.min(tvr.b - HUD_M - HUDH, tvr.t + g.hudUser.y))
+  else
+    hudX = x1 + 14
+    if hudX + HUDW > tvr.r - HUD_M then hudX = tvr.r - HUD_M - HUDW end
+    if hudX < tvr.l + HUD_M then hudX = tvr.l + HUD_M end
+    hudY = yt - HUDH - 16
+    if hudY < tvr.t + HUD_M then hudY = tvr.t + HUD_M end
+  end
   g.hudRect = { x = hudX, y = hudY, w = HUDW, h = HUDH }
 
   local handles = {
@@ -448,6 +545,33 @@ function M.frame(ctx)
   -- the panel — so gate on that too, or dragging a fader off the panel would trip the click-away and end
   -- the tool.
   local hudBusy = overHud or reaper.ImGui_IsAnyItemActive(ctx)
+  -- Drag the PANEL itself from any empty spot on it (not over a widget — widget hover is last frame's
+  -- state, which is exactly right since our mouse handling runs before this frame's widgets). The parked
+  -- position is view-relative, clamped, and SESSION-ONLY — every launch starts back at the default spot
+  -- off the box's top-right corner. DOUBLE-CLICK an empty spot on the panel to send it back immediately.
+  local anyItemHot = (reaper.ImGui_IsAnyItemActive and reaper.ImGui_IsAnyItemActive(ctx))
+                  or (reaper.ImGui_IsAnyItemHovered and reaper.ImGui_IsAnyItemHovered(ctx))
+  if g.hudDrag then
+    local d = g.hudDrag
+    if down then
+      -- 3px threshold: a plain click on empty panel space must NOT silently park the panel in place
+      if not d.moved and (math.abs(mx - d.sx) > 3 or math.abs(my - d.sy) > 3) then d.moved = true end
+      if d.moved then
+        hudX = math.max(tvr.l + HUD_M, math.min(tvr.r - HUD_M - HUDW, mx - d.dx))
+        hudY = math.max(tvr.t + HUD_M, math.min(tvr.b - HUD_M - HUDH, my - d.dy))
+        g.hudUser = { x = hudX - tvr.l, y = hudY - tvr.t }
+        g.hudRect.x, g.hudRect.y = hudX, hudY
+      end
+    else
+      g.hudDrag = nil   -- released: the parked spot holds for THIS session only (not persisted)
+    end
+  elseif overHud and not g.zone and not anyItemHot then
+    if reaper.ImGui_IsMouseDoubleClicked and reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
+      g.hudUser = nil   -- back to the default spot off the box's top-right corner (next frame)
+    elseif down and reaper.ImGui_IsMouseClicked and reaper.ImGui_IsMouseClicked(ctx, 0) then
+      g.hudDrag = { dx = mx - g.hudRect.x, dy = my - g.hudRect.y, sx = mx, sy = my, moved = false }
+    end
+  end
   -- begin drag — skipped while interacting with the HUD, so adjusting it never grabs a handle nor ends the
   -- tool (the HUD widgets live in THIS same window and handle their own clicks).
   if down and not g.zone and not hudBusy then
@@ -528,7 +652,10 @@ function M.frame(ctx)
       markEditDirty()  -- CC: register the edit before closing (flag-4 entry is empty without it)
       reaper.Undo_EndBlock2(0, g.undoLabel, g.undoFlag); g.dragUndo = false
     end
-    resyncSnap()  -- CC: take changed; the next write must rebuild from this committed state, not launch
+    -- CC: the take changed; the next write must rebuild from this committed state, not the launch state.
+    -- If the re-snapshot fails (take gone/broken), end the tool cleanly — the drag is already committed;
+    -- continuing with the stale snapshot could resurrect points a later write should have removed.
+    if not resyncSnap() then return false end
   end
 
   -- Live param gestures over the arrange (not while over the HUD or dragging a widget): wheel = Curve,
@@ -576,37 +703,50 @@ function M.frame(ctx)
     reaper.ImGui_DrawList_AddRect(dl, hudX, hudY, hudX+HUDW, hudY+HUDH, ACCENT, 6, 0, 1.5)
     local p = M.params
     local PAD, RH = 11, 27
-    local function rowY(i) reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hudY + PAD + i * RH) end
-    reaper.ImGui_PushItemWidth(ctx, HUDW - 2 * PAD)
-    rowY(0)
-    _, p.knob = reaper.ImGui_SliderInt(ctx, "##hud_curve", p.knob, -100, 100,
-      p.knob == 0 and "Curve: linear" or "Curve: %d")
-    rowY(1)
-    if reaper.ImGui_RadioButton(ctx, "Power##hud_pow", p.shape == "power") then p.shape = "power" end
-    reaper.ImGui_SameLine(ctx)
-    if reaper.ImGui_RadioButton(ctx, "Sine##hud_sine", p.shape == "sine") then p.shape = "sine" end
-    rowY(2)
-    local cSym, sym = reaper.ImGui_Checkbox(ctx, "Symmetrical##hud_sym", p.symmetrical)
-    if cSym then p.symmetrical = sym end
-    rowY(3)
-    reaper.ImGui_Text(ctx, (g and g.status) or "Grab a handle to transform")
-    rowY(4)
-    if reaper.ImGui_Button(ctx, "Reverse##hud_rev") then M._pendingOneShot = "reverse" end
-    reaper.ImGui_SameLine(ctx)
-    if reaper.ImGui_Button(ctx, "Flip##hud_flip") then M._pendingOneShot = "flip" end
-    reaper.ImGui_SameLine(ctx)
-    if reaper.ImGui_Button(ctx, "Reset##hud_reset") then M._pendingOneShot = "reset" end
-    rowY(5)
-    if reaper.ImGui_RadioButton(ctx, "Absolute##hud_fa", p.flipMode == "absolute") then p.flipMode = "absolute" end
-    reaper.ImGui_SameLine(ctx)
-    if reaper.ImGui_RadioButton(ctx, "Relative##hud_fr", p.flipMode == "relative") then p.flipMode = "relative" end
-    -- Gesture hints, one per short line (pre-broken; the full single line won't fit, and ImGui wrap takes
-    -- window-local coords our screen-pos layout doesn't use). Each line sits 17px below the previous.
-    local hy = hudY + PAD + 6 * RH
-    reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy);      reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Mouse Scroll: Curve")
-    reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 17); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Middle-click: Power/Sine")
-    reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 34); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Right-click: Symmetrical")
-    reaper.ImGui_PopItemWidth(ctx)
+    -- Collapse / expand toggle (top-right corner). Collapsed = a slim strip with just the live status:
+    -- the shaping params keep their mouse gestures (wheel / middle / right click), so collapsing costs
+    -- nothing while working — it's the escape hatch for cramped editors. Persisted across launches.
+    reaper.ImGui_SetCursorScreenPos(ctx, hudX + HUDW - PAD - 18, hudY + (g.hudCollapsed and 4 or PAD - 2))
+    if reaper.ImGui_SmallButton(ctx, (g.hudCollapsed and "+" or "-") .. "##hud_tog") then
+      g.hudCollapsed = not g.hudCollapsed
+      reaper.SetExtState("Contour", "tr_hudcollapsed", g.hudCollapsed and "1" or "0", true)
+    end
+    if g.hudCollapsed then
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hudY + 6)
+      reaper.ImGui_Text(ctx, (g and g.status) or "Grab a handle to transform")
+    else
+      local function rowY(i) reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hudY + PAD + i * RH) end
+      reaper.ImGui_PushItemWidth(ctx, HUDW - 2 * PAD - 24)   -- row 0 leaves room for the toggle button
+      rowY(0)
+      _, p.knob = reaper.ImGui_SliderInt(ctx, "##hud_curve", p.knob, -100, 100,
+        p.knob == 0 and "Curve: linear" or "Curve: %d")
+      rowY(1)
+      if reaper.ImGui_RadioButton(ctx, "Power##hud_pow", p.shape == "power") then p.shape = "power" end
+      reaper.ImGui_SameLine(ctx)
+      if reaper.ImGui_RadioButton(ctx, "Sine##hud_sine", p.shape == "sine") then p.shape = "sine" end
+      rowY(2)
+      local cSym, sym = reaper.ImGui_Checkbox(ctx, "Symmetrical##hud_sym", p.symmetrical)
+      if cSym then p.symmetrical = sym end
+      rowY(3)
+      reaper.ImGui_Text(ctx, (g and g.status) or "Grab a handle to transform")
+      rowY(4)
+      if reaper.ImGui_Button(ctx, "Reverse##hud_rev") then M._pendingOneShot = "reverse" end
+      reaper.ImGui_SameLine(ctx)
+      if reaper.ImGui_Button(ctx, "Flip##hud_flip") then M._pendingOneShot = "flip" end
+      reaper.ImGui_SameLine(ctx)
+      if reaper.ImGui_Button(ctx, "Reset##hud_reset") then M._pendingOneShot = "reset" end
+      rowY(5)
+      if reaper.ImGui_RadioButton(ctx, "Absolute##hud_fa", p.flipMode == "absolute") then p.flipMode = "absolute" end
+      reaper.ImGui_SameLine(ctx)
+      if reaper.ImGui_RadioButton(ctx, "Relative##hud_fr", p.flipMode == "relative") then p.flipMode = "relative" end
+      -- Gesture hints, one per short line (pre-broken; the full single line won't fit, and ImGui wrap takes
+      -- window-local coords our screen-pos layout doesn't use). Each line sits 17px below the previous.
+      local hy = hudY + PAD + 6 * RH
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy);      reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Mouse Scroll: Curve")
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 17); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Middle-click: Power/Sine")
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 34); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Right-click: Symmetrical")
+      reaper.ImGui_PopItemWidth(ctx)
+    end
   end
   reaper.ImGui_End(ctx)
   return true
@@ -633,5 +773,11 @@ function M.finish()
   M._pendingOneShot = nil  -- don't let a queued one-shot survive into the next session
   g = nil
 end
+
+-- Test seams (underscore = not public): the pure VELLANE-stack helpers, callable without ImGui/REAPER so
+-- the multi-lane geometry math is unit-testable headlessly (tests/test_cclane_stack.lua).
+M._parseVellanes = parseVellanes   -- (chunk) -> { {lane, h}, ... } top-to-bottom
+M._laneSlot      = laneSlot        -- (lanes, lane) -> height, bottomOffset | nil
+M._hudRectNow    = function() return g and g.hudRect end   -- live HUD rect (read-only; nil when idle)
 
 return M

@@ -941,9 +941,10 @@ function M.draw(ctx, state, detected)
   end
 
   -- == Reset (v2.1 U3) ==
-  -- Restores ALL Generate controls to their documented defaults (shape -> None, so
-  -- the panel returns to the no-op state). Lane (ccNum/lastLane), seed, and Live are
-  -- intentionally preserved. Because shape becomes None, this does NOT trigger a write.
+  -- Restores the Generate controls to their documented defaults but PRESERVES the selected shape
+  -- (resetDefaults clears the parameters, not the shape choice), plus lane (ccNum/lastLane), seed,
+  -- and Live. Amplitude snaps to the per-target default and resumes following it. NOTE: with Live on
+  -- this counts as an edit, so the lane is immediately re-stamped with the default parameters.
   if reaper.ImGui_Button(ctx, "Reset##gen_reset") then
     resetDefaults(g)
     g.amplitude = defaultAmp(detected)   -- target-aware (envelope/AI = 100, CC = 50)
