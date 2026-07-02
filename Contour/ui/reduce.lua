@@ -19,6 +19,7 @@ local M = {}
 local reduce = require("core.reduce")
 local target = require("core.target")
 local common = require("ui.common")
+local theme  = require("ui.theme")
 
 local COLOR_ERR  = 0xE05050FF
 local COLOR_OK   = 0x60C080FF
@@ -310,7 +311,7 @@ function M.draw(ctx, state, detected)
 
   if gesture.open and state.op ~= "reduce" then endGesture(true) end
 
-  reaper.ImGui_Text(ctx, "Reduce points")
+  theme.sectionHeader(ctx, "Reduce points")
 
   do
     local rv, v = reaper.ImGui_Checkbox(ctx, "Live##red_live", g.live)
@@ -348,7 +349,7 @@ function M.draw(ctx, state, detected)
   do
     local changed
     changed, g.amount = reaper.ImGui_SliderInt(ctx, "Reduction##red_amt", g.amount, 0, 100, "%d%%")
-    acc(changed); acc(common.tickReset(ctx, g, "amount", 0, 100, 0))
+    acc(changed); acc(common.tickReset(ctx, g, "amount", 0, 100, 0, g.amount .. "%"))
   end
 
   reaper.ImGui_Separator(ctx)
@@ -404,10 +405,10 @@ function M.draw(ctx, state, detected)
   else
     if reaper.ImGui_BeginDisabled then
       reaper.ImGui_BeginDisabled(ctx, not ready)
-      if reaper.ImGui_Button(ctx, "Reduce##red_run") then M.run(state, detected, g) end
+      if theme.accentButton(ctx, "Reduce##red_run") then M.run(state, detected, g) end
       reaper.ImGui_EndDisabled(ctx)
     elseif ready then
-      if reaper.ImGui_Button(ctx, "Reduce##red_run") then M.run(state, detected, g) end
+      if theme.accentButton(ctx, "Reduce##red_run") then M.run(state, detected, g) end
     end
   end
 

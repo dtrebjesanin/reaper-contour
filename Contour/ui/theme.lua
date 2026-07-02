@@ -10,15 +10,16 @@
 local M = {}
 
 local C = {
-  text      = 0xDCE1E6FF, textDim   = 0x77818CFF,
+  text      = 0xE3E8ECFF, textDim   = 0x8B97A2FF,
   winBg     = 0x1B1E23FF, childBg   = 0x20242AFF, popupBg = 0x22262CFF,
-  frame     = 0x2B3138FF, frameH    = 0x343B44FF, frameA  = 0x3C444EFF,
+  frame     = 0x262D34FF, frameH    = 0x303842FF, frameA  = 0x3A424DFF,
   accent    = 0x2E8B9BFF, accentH   = 0x3FB6C4FF, accentA = 0x53C9D6FF, accentDim = 0x2A6A75FF,
   tab       = 0x262B31FF, tabH      = 0x3FB6C4FF, tabSel  = 0x2E8B9BFF,
-  sep       = 0x39404AFF,
+  sep       = 0x323A44FF,
   scrollBg  = 0x1B1E23FF, scrollGrab= 0x3C444EFF, scrollGrabH = 0x4A535EFF,
   header    = 0x2E8B9B33, headerH   = 0x2E8B9B55, headerA = 0x2E8B9B77,
-  button    = 0x2B3138FF, buttonH   = 0x343B44FF, buttonA = 0x2E8B9BFF,
+  button    = 0x262D34FF, buttonH   = 0x303842FF, buttonA = 0x2E8B9BFF,
+  onAccent  = 0xF3FBFCFF,   -- text on accent-filled controls
 }
 
 -- { Col_ enum fn name, color }. Both the legacy (TabActive/TabUnfocused) and the newer
@@ -31,7 +32,9 @@ local COLORS = {
   { "ImGui_Col_FrameBg", C.frame }, { "ImGui_Col_FrameBgHovered", C.frameH }, { "ImGui_Col_FrameBgActive", C.frameA },
   { "ImGui_Col_TitleBg", C.childBg }, { "ImGui_Col_TitleBgActive", C.frame }, { "ImGui_Col_TitleBgCollapsed", C.childBg },
   { "ImGui_Col_Button", C.button }, { "ImGui_Col_ButtonHovered", C.buttonH }, { "ImGui_Col_ButtonActive", C.buttonA },
-  { "ImGui_Col_SliderGrab", C.accent }, { "ImGui_Col_SliderGrabActive", C.accentA },
+  -- Muted gray grab: the real faders draw their own dimensional cap over it (ui/common drawFaderPolish),
+  -- so the stock grab must not fight it; the few utility sliders without the cap (Grid X/Y) still read.
+  { "ImGui_Col_SliderGrab", C.frameA }, { "ImGui_Col_SliderGrabActive", 0x4A535EFF },
   { "ImGui_Col_CheckMark", C.accentH },
   { "ImGui_Col_Header", C.header }, { "ImGui_Col_HeaderHovered", C.headerH }, { "ImGui_Col_HeaderActive", C.headerA },
   { "ImGui_Col_Separator", C.sep }, { "ImGui_Col_SeparatorHovered", C.accent }, { "ImGui_Col_SeparatorActive", C.accentH },
@@ -44,14 +47,14 @@ local COLORS = {
 
 -- { StyleVar_ enum fn name, val1, val2_or_nil }. Two-component vars (padding/spacing) pass both.
 local VARS = {
-  { "ImGui_StyleVar_WindowRounding", 6 }, { "ImGui_StyleVar_ChildRounding", 6 },
-  { "ImGui_StyleVar_PopupRounding", 6 }, { "ImGui_StyleVar_FrameRounding", 5 },
-  { "ImGui_StyleVar_GrabRounding", 4 }, { "ImGui_StyleVar_TabRounding", 5 },
+  { "ImGui_StyleVar_WindowRounding", 8 }, { "ImGui_StyleVar_ChildRounding", 6 },
+  { "ImGui_StyleVar_PopupRounding", 6 }, { "ImGui_StyleVar_FrameRounding", 6 },
+  { "ImGui_StyleVar_GrabRounding", 6 }, { "ImGui_StyleVar_TabRounding", 5 },
   { "ImGui_StyleVar_ScrollbarRounding", 6 },
   { "ImGui_StyleVar_WindowBorderSize", 0 }, { "ImGui_StyleVar_FrameBorderSize", 0 },
-  { "ImGui_StyleVar_GrabMinSize", 12 }, { "ImGui_StyleVar_ScrollbarSize", 13 },
-  { "ImGui_StyleVar_WindowPadding", 12, 10 }, { "ImGui_StyleVar_FramePadding", 8, 5 },
-  { "ImGui_StyleVar_ItemSpacing", 8, 7 }, { "ImGui_StyleVar_ItemInnerSpacing", 6, 5 },
+  { "ImGui_StyleVar_GrabMinSize", 14 }, { "ImGui_StyleVar_ScrollbarSize", 12 },
+  { "ImGui_StyleVar_WindowPadding", 14, 12 }, { "ImGui_StyleVar_FramePadding", 9, 6 },
+  { "ImGui_StyleVar_ItemSpacing", 8, 8 }, { "ImGui_StyleVar_ItemInnerSpacing", 6, 5 },
 }
 
 local font                  -- created + attached once (nil if unavailable)
@@ -78,7 +81,9 @@ function M.init(ctx)
 end
 
 -- Push the whole theme. Call BEFORE ImGui_Begin so WindowBg/rounding/padding apply to the window.
-function M.push(ctx)
+-- colorsOnly=true pushes the PALETTE without the spacing/rounding vars — for windows with their own
+-- fixed metrics (the Transform overlay HUD) that should match Contour's colors, not its geometry.
+function M.push(ctx, colorsOnly)
   if not reaper.ImGui_PushStyleColor then return end
   pushedColors = 0
   for _, c in ipairs(COLORS) do
@@ -86,6 +91,7 @@ function M.push(ctx)
     if fn then reaper.ImGui_PushStyleColor(ctx, fn(), c[2]); pushedColors = pushedColors + 1 end
   end
   pushedVars = 0
+  if colorsOnly then return end
   for _, v in ipairs(VARS) do
     local fn = reaper[v[1]]
     if fn then
@@ -116,6 +122,48 @@ function M.pushFont(ctx)
 end
 function M.popFont(ctx)
   if fontPushed and reaper.ImGui_PopFont then pcall(reaper.ImGui_PopFont, ctx); fontPushed = false end
+end
+
+-- The palette, exposed READ-ONLY so panels can color one-off text (dim labels, values) consistently.
+-- Don't mutate it — restyle by editing C above.
+M.C = C
+
+-- Section header: a small breather, the label in the accent tint, and a hairline running from the
+-- label to the window's right edge. Pure DrawList + Text — no stateful widgets (no BeginChild/tree),
+-- so the panels' balanced-ImGui-stack safety invariant is untouched. Guarded: degrades to plain text.
+function M.sectionHeader(ctx, label)
+  if reaper.ImGui_Dummy then reaper.ImGui_Dummy(ctx, 1, 3) end
+  if reaper.ImGui_TextColored then reaper.ImGui_TextColored(ctx, C.accentH, label)
+  else reaper.ImGui_Text(ctx, label) end
+  if reaper.ImGui_GetItemRectMin and reaper.ImGui_GetItemRectMax and reaper.ImGui_GetWindowDrawList
+     and reaper.ImGui_DrawList_AddLine and reaper.ImGui_GetWindowPos and reaper.ImGui_GetWindowSize then
+    local _, y0 = reaper.ImGui_GetItemRectMin(ctx)
+    local x1, y1 = reaper.ImGui_GetItemRectMax(ctx)
+    local wx = reaper.ImGui_GetWindowPos(ctx)
+    local ww = reaper.ImGui_GetWindowSize(ctx)
+    if x1 and y0 and y1 and wx and ww then
+      local cy = math.floor((y0 + y1) / 2) + 1
+      reaper.ImGui_DrawList_AddLine(reaper.ImGui_GetWindowDrawList(ctx),
+        x1 + 8, cy, wx + ww - 26, cy, 0x323A4480, 1)   -- sep tint at half alpha; stops short of the scrollbar
+    end
+  end
+end
+
+-- Primary-action button (accent-filled): THE action of a panel should read at a glance, so Generate /
+-- Reduce / Launch use this while secondary buttons (Reset, presets) stay muted. Pops exactly what it
+-- pushed; degrades to a plain button when styling is unavailable. Returns Button's clicked result.
+function M.accentButton(ctx, label)
+  local pushed = 0
+  if reaper.ImGui_PushStyleColor then
+    local function pc(fn, col)
+      if reaper[fn] then reaper.ImGui_PushStyleColor(ctx, reaper[fn](), col); pushed = pushed + 1 end
+    end
+    pc("ImGui_Col_Button", C.accent); pc("ImGui_Col_ButtonHovered", C.accentH)
+    pc("ImGui_Col_ButtonActive", C.accentA); pc("ImGui_Col_Text", C.onAccent)
+  end
+  local clicked = reaper.ImGui_Button(ctx, label)
+  if pushed > 0 then reaper.ImGui_PopStyleColor(ctx, pushed) end
+  return clicked
 end
 
 return M

@@ -19,6 +19,7 @@ local starters    = require("core.starters")
 local genpreset   = require("core.genpreset")
 local drawpad     = require("ui.drawpad")
 local common      = require("ui.common")
+local theme       = require("ui.theme")
 
 -- Shape ids MUST match what core/shapes.lua / core/lfo.lua expect. "None" is FIRST and the
 -- DEFAULT (v2.1 U1): a NO-OP — picking it generates and writes NOTHING (canGenerate=false),
@@ -600,7 +601,7 @@ function M.draw(ctx, state, detected)
     endLiveGesture(true)  -- nil label => use the target-aware liveGesture.undoLabel
   end
 
-  reaper.ImGui_Text(ctx, "Generate LFO")
+  theme.sectionHeader(ctx, "Generate LFO")
 
   -- == Live toggle ==
   do
@@ -790,7 +791,7 @@ function M.draw(ctx, state, detected)
   end
 
   -- == Rate ==
-  reaper.ImGui_Text(ctx, "Rate")
+  theme.sectionHeader(ctx, "Rate")
   do
     local changed, idx = reaper.ImGui_Combo(ctx, "Mode##gen_ratemode", g.rateMode, RATE_ITEMS, #RATE_ITEMS)
     if changed and idx ~= g.rateMode then g.rateMode = idx; acc(true) end
@@ -800,36 +801,53 @@ function M.draw(ctx, state, detected)
     -- Length & Frequency are SLIDERS (per request) over the note-value list; the format string is
     -- the current note label (e.g. "1/4"), so the slider reads like native's value field. Feel
     -- stays a small 3-option dropdown.
-    local cL, iL = reaper.ImGui_SliderInt(ctx, "Length##gen_len", g.lengthIdx, 0, #NOTE_VALUES - 1, NOTE_LABELS[g.lengthIdx + 1] or "")
+    -- Length/Frequency have FEW integer steps, so ImGui gives them an extra-wide stock grab that pokes
+    -- out past the drawn fader cap (gray slabs). Hide the stock grab on these two — the cap owns the look.
+    local canHide = reaper.ImGui_PushStyleColor and reaper.ImGui_Col_SliderGrab and reaper.ImGui_Col_SliderGrabActive
+    local function pushNoGrab()
+      if canHide then
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_SliderGrab(), 0x00000000)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_SliderGrabActive(), 0x00000000)
+      end
+    end
+    local function popNoGrab() if canHide then reaper.ImGui_PopStyleColor(ctx, 2) end end
+    -- Length/Frequency edit an INDEX into the note-value lists, so Ctrl+click type-in would ask for
+    -- the raw index, not the "1/4" they display — disable text input on these two (they're step pickers).
+    local NOINPUT = reaper.ImGui_SliderFlags_NoInput and reaper.ImGui_SliderFlags_NoInput() or 0
+    pushNoGrab()
+    local cL, iL = reaper.ImGui_SliderInt(ctx, "Length##gen_len", g.lengthIdx, 0, #NOTE_VALUES - 1, NOTE_LABELS[g.lengthIdx + 1] or "", NOINPUT)
+    popNoGrab()
     if cL and iL ~= g.lengthIdx then g.lengthIdx = math.max(0, math.min(#NOTE_VALUES - 1, iL)); acc(true) end
-    acc(common.tickReset(ctx, g, "lengthIdx", 0, #NOTE_VALUES - 1, DEFAULTS.lengthIdx))
+    acc(common.tickReset(ctx, g, "lengthIdx", 0, #NOTE_VALUES - 1, DEFAULTS.lengthIdx, NOTE_LABELS[g.lengthIdx + 1] or ""))
     local cM, iM = reaper.ImGui_Combo(ctx, "Feel##gen_feel", g.feelIdx, FEEL_ITEMS, #FEEL_ITEMS)
     if cM and iM ~= g.feelIdx then g.feelIdx = iM; acc(true) end
-    local cF, iF = reaper.ImGui_SliderInt(ctx, "Frequency##gen_freq", g.freqIdx, 0, #FREQ_VALUES - 1, FREQ_LABELS[g.freqIdx + 1] or "")
+    pushNoGrab()
+    local cF, iF = reaper.ImGui_SliderInt(ctx, "Frequency##gen_freq", g.freqIdx, 0, #FREQ_VALUES - 1, FREQ_LABELS[g.freqIdx + 1] or "", NOINPUT)
+    popNoGrab()
     if cF and iF ~= g.freqIdx then g.freqIdx = math.max(0, math.min(#FREQ_VALUES - 1, iF)); acc(true) end
-    acc(common.tickReset(ctx, g, "freqIdx", 0, #FREQ_VALUES - 1, DEFAULTS.freqIdx))
+    acc(common.tickReset(ctx, g, "freqIdx", 0, #FREQ_VALUES - 1, DEFAULTS.freqIdx, FREQ_LABELS[g.freqIdx + 1] or ""))
   elseif g.rateMode == RATE_FREE then
     local changed
     changed, g.cycles = reaper.ImGui_SliderInt(ctx, "Cycles##gen_cycles", g.cycles, 1, 64, "%d")
     acc(changed)
-    acc(common.tickReset(ctx, g, "cycles", 1, 64, DEFAULTS.cycles))
+    acc(common.tickReset(ctx, g, "cycles", 1, 64, DEFAULTS.cycles, tostring(g.cycles)))
   else -- RATE_HZ
     local changed
     changed, g.hz = reaper.ImGui_SliderDouble(ctx, "Hz##gen_hz", g.hz, 0.01, 50.0, "%.2f")
     acc(changed)
-    acc(common.tickReset(ctx, g, "hz", 0.01, 50.0, DEFAULTS.hz))
+    acc(common.tickReset(ctx, g, "hz", 0.01, 50.0, DEFAULTS.hz, ("%.2f"):format(g.hz)))
   end
 
   reaper.ImGui_Separator(ctx)
 
   -- == Level ==
-  reaper.ImGui_Text(ctx, "Level")
+  theme.sectionHeader(ctx, "Level")
   do
     local changed
     -- Baseline -100..100 (0 = center). Double-click the fader to snap to the notch (default).
     changed, g.baseline = reaper.ImGui_SliderInt(ctx, "Baseline##gen_base", g.baseline, -100, 100, "%d")
     acc(changed)
-    acc(common.tickReset(ctx, g, "baseline", -100, 100, 0))
+    acc(common.tickReset(ctx, g, "baseline", -100, 100, 0, tostring(g.baseline)))
     -- Amplitude: linear -200..200 (% of half range; negative inverts the wave, >100 clips). Plain
     -- SliderInt so Ctrl+click type-entry works. Notch + double-click snap to the per-target default
     -- (envelope/AI 100, CC 50).
@@ -837,7 +855,7 @@ function M.draw(ctx, state, detected)
     if changed then g.ampDirty = true end   -- user moved it: stop following the per-target default
     acc(changed)
     -- Double-click reset to the per-target default also resumes following it.
-    if common.tickReset(ctx, g, "amplitude", -200, 200, defaultAmp(detected)) then g.ampDirty = false; acc(true) end
+    if common.tickReset(ctx, g, "amplitude", -200, 200, defaultAmp(detected), tostring(g.amplitude)) then g.ampDirty = false; acc(true) end
   end
 
   reaper.ImGui_Separator(ctx)
@@ -854,69 +872,69 @@ function M.draw(ctx, state, detected)
 
     -- -- Cycle shape ---------------------------------------------------------------------------------
     -- For Random/Drift every per-cycle control is hidden, so skip the header too (no empty group).
-    if not special then reaper.ImGui_Text(ctx, "Cycle shape") end
+    if not special then theme.sectionHeader(ctx, "Cycle shape") end
     -- Phase 0..100 slider units (phase/100 cycles; 100 = one full cycle), converted in buildParams.
     -- All shaping faders: double-click snaps to the notch (default).
     if not special then
       changed, g.phase = reaper.ImGui_SliderInt(ctx, "Phase##gen_phase", g.phase, 0, 100, "%d")
-      acc(changed); acc(common.tickReset(ctx, g, "phase", 0, 100, 0))
+      acc(changed); acc(common.tickReset(ctx, g, "phase", 0, 100, 0, tostring(g.phase)))
     end
     -- Pulse width only for Square.
     if sid == "square" then
       changed, g.pulseWidth = reaper.ImGui_SliderDouble(ctx, "Pulse width##gen_pw", g.pulseWidth, 0.01, 0.99, "%.2f")
-      acc(changed); acc(common.tickReset(ctx, g, "pulseWidth", 0.01, 0.99, 0.5))
+      acc(changed); acc(common.tickReset(ctx, g, "pulseWidth", 0.01, 0.99, 0.5, ("%.2f"):format(g.pulseWidth)))
     end
     -- Edge only for Trapezoid (0 = square, 100 = triangle).
     if sid == "trapezoid" then
       changed, g.edge = reaper.ImGui_SliderInt(ctx, "Edge##gen_edge", g.edge, 0, 100, "%d")
-      acc(changed); acc(common.tickReset(ctx, g, "edge", 0, 100, 50))
+      acc(changed); acc(common.tickReset(ctx, g, "edge", 0, 100, 50, tostring(g.edge)))
     end
     -- Attack for Triangle (peak position, % of cycle).
     if sid == "triangle" then
       changed, g.attack = reaper.ImGui_SliderInt(ctx, "Attack##gen_attack", g.attack, 1, 99, "%d")
-      acc(changed); acc(common.tickReset(ctx, g, "attack", 1, 99, 50))
+      acc(changed); acc(common.tickReset(ctx, g, "attack", 1, 99, 50, tostring(g.attack)))
     end
     -- Curve for Saw Up/Down + Triangle (ease steepness). Bipolar: 0 = linear, + one way, - the other.
     if sid == "saw" or sid == "sawdown" or sid == "triangle" then
       changed, g.curve = reaper.ImGui_SliderInt(ctx, "Curve##gen_curve", g.curve, -100, 100, "%d")
-      acc(changed); acc(common.tickReset(ctx, g, "curve", -100, 100, 0))
+      acc(changed); acc(common.tickReset(ctx, g, "curve", -100, 100, 0, tostring(g.curve)))
     end
     -- Swing for periodic shapes EXCEPT triangle, whose Attack already controls peak position (Swing
     -- there would just duplicate it). Custom honors Swing via the generic SSS path.
     if not special and sid ~= "triangle" then
       changed, g.swing = reaper.ImGui_SliderDouble(ctx, "Swing##gen_swing", g.swing, -1.0, 1.0, "%.2f")
-      acc(changed); acc(common.tickReset(ctx, g, "swing", -1.0, 1.0, 0.0))
+      acc(changed); acc(common.tickReset(ctx, g, "swing", -1.0, 1.0, 0.0, ("%.2f"):format(g.swing)))
     end
     -- Steps quantizes the wave into N flat levels (a staircase). Meaningless on Square (already 2
     -- levels) and on the special generators. Custom is quantized via the generic SSS path.
     if not special and sid ~= "square" then
       changed, g.steps = reaper.ImGui_SliderInt(ctx, "Steps##gen_steps", g.steps, 0, 32, g.steps < 2 and "off" or "%d")
-      acc(changed); acc(common.tickReset(ctx, g, "steps", 0, 32, 0))
+      acc(changed); acc(common.tickReset(ctx, g, "steps", 0, 32, 0, g.steps < 2 and "off" or tostring(g.steps)))
     end
     -- Smooth rounds the shape toward a sine. Meaningless on Sine (already a sine) and the specials.
     -- Custom is smoothed (blended toward sine) via the generic SSS path.
     if not special and sid ~= "sine" then
       changed, g.smooth = reaper.ImGui_SliderInt(ctx, "Smooth##gen_smooth", g.smooth, 0, 100, "%d")
-      acc(changed); acc(common.tickReset(ctx, g, "smooth", 0, 100, 0))
+      acc(changed); acc(common.tickReset(ctx, g, "smooth", 0, 100, 0, tostring(g.smooth)))
     end
 
     -- -- Across the selection ------------------------------------------------------------------------
     -- Ramps applied over the whole write (NOT reflected in the per-cycle ghost — they read in the lane).
     reaper.ImGui_Separator(ctx)
-    reaper.ImGui_Text(ctx, "Across the selection")
+    theme.sectionHeader(ctx, "Across the selection")
     -- Amp skew applies to every shape (the dedicated emitters use it too). Freq skew is periodic-only.
     changed, g.ampSkew = reaper.ImGui_SliderInt(ctx, "Amp skew##gen_ampskew", g.ampSkew, -100, 100, "%d")
-    acc(changed); acc(common.tickReset(ctx, g, "ampSkew", -100, 100, 0))
+    acc(changed); acc(common.tickReset(ctx, g, "ampSkew", -100, 100, 0, tostring(g.ampSkew)))
     if not special then
       changed, g.freqSkew = reaper.ImGui_SliderInt(ctx, "Freq skew##gen_freqskew", g.freqSkew, -100, 100, "%d")
-      acc(changed); acc(common.tickReset(ctx, g, "freqSkew", -100, 100, 0))
+      acc(changed); acc(common.tickReset(ctx, g, "freqSkew", -100, 100, 0, tostring(g.freqSkew)))
     end
     -- Two independent tilt sliders: Tilt L is anchored at the LEFT edge (raises/lowers the right end;
     -- REAPER's native tilt); Tilt R is anchored at the RIGHT edge (raises/lowers the left end).
     changed, g.tilt = reaper.ImGui_SliderInt(ctx, "Tilt L##gen_tilt", g.tilt, -100, 100, "%d")
-    acc(changed); acc(common.tickReset(ctx, g, "tilt", -100, 100, 0))
+    acc(changed); acc(common.tickReset(ctx, g, "tilt", -100, 100, 0, tostring(g.tilt)))
     changed, g.tiltR = reaper.ImGui_SliderInt(ctx, "Tilt R##gen_tiltR", g.tiltR, -100, 100, "%d")
-    acc(changed); acc(common.tickReset(ctx, g, "tiltR", -100, 100, 0))
+    acc(changed); acc(common.tickReset(ctx, g, "tiltR", -100, 100, 0, tostring(g.tiltR)))
   end
 
   reaper.ImGui_Separator(ctx)
@@ -1076,10 +1094,10 @@ function M.draw(ctx, state, detected)
     -- Non-live: the Generate button commits on click (slice-3 behavior).
     if reaper.ImGui_BeginDisabled then
       reaper.ImGui_BeginDisabled(ctx, not ready)
-      if reaper.ImGui_Button(ctx, "Generate##gen_run") then M.run(state, detected, g) end
+      if theme.accentButton(ctx, "Generate##gen_run") then M.run(state, detected, g) end
       reaper.ImGui_EndDisabled(ctx)
     elseif ready then
-      if reaper.ImGui_Button(ctx, "Generate##gen_run") then M.run(state, detected, g) end
+      if theme.accentButton(ctx, "Generate##gen_run") then M.run(state, detected, g) end
     end
   end
 

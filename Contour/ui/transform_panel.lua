@@ -1,6 +1,7 @@
 -- ui/transform_panel.lua — Contour's Transform op body: a Scope toggle + Launch button. The overlay tool
 -- owns the shaping controls (Curve / Power-Sine / Symmetrical) and the live readout, not this panel.
 local M = {}
+local theme = require("ui.theme")
 M.scope = "points"  -- "points" | "timesel" — which region Launch hands to the tool
 
 local COLOR_HINT = 0xC0A040FF
@@ -26,7 +27,7 @@ local function resolveCmd()
 end
 
 function M.draw(ctx, state)
-  reaper.ImGui_Text(ctx, "Transform (mouse overlay)")
+  theme.sectionHeader(ctx, "Transform (mouse overlay)")
   reaper.ImGui_TextColored(ctx, COLOR_HINT, "Pick a scope, then Launch — shaping controls are in the tool.")
   reaper.ImGui_Separator(ctx)
 
@@ -37,7 +38,7 @@ function M.draw(ctx, state)
   if rPts then M.scope = "points" end
   if rTS  then M.scope = "timesel" end
 
-  if reaper.ImGui_Button(ctx, "Launch Transform##tr_launch") then
+  if theme.accentButton(ctx, "Launch Transform##tr_launch") then
     reaper.SetExtState("Contour", "tr_scope", M.scope, false)  -- one-time scope handoff
     local cmd = resolveCmd()
     if cmd ~= 0 then reaper.Main_OnCommand(cmd, 0); M.status = nil  -- clear any stale prior-launch error

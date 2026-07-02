@@ -6,6 +6,8 @@ local M = {}
 local target = require("core.target")
 local ac     = require("core.arrangecoords")
 local tr     = require("core.transform")
+local common = require("ui.common")
+local theme  = require("ui.theme")
 -- Shaping params live HERE (the overlay is its own script instance — no cross-process sync needed). The
 -- HUD edits them; the drag branches read them via g.knob/g.shape/g.symmetrical each frame.
 M.params = { knob = 0, shape = "power", symmetrical = false, flipMode = "absolute" }
@@ -705,6 +707,10 @@ function M.frame(ctx)
   -- the HUD keeps responding even after a handle drag focuses the overlay (the earlier two-window version
   -- stopped registering HUD clicks after the first drag). The window CAPTURES input (no NoInputs) so the
   -- arrange can't be clicked/zoomed while the tool is active.
+  -- The HUD widgets take the Contour panel's PALETTE (colors only — the HUD keeps its own fixed row
+  -- metrics and the default font, so nothing crowds). DrawList visuals (box, handles, HUD background)
+  -- keep their own colors. The window uses NoBackground, so the themed WindowBg is inert.
+  theme.push(ctx, true)
   reaper.ImGui_SetNextWindowPos(ctx, tvr.l, tvr.t)
   reaper.ImGui_SetNextWindowSize(ctx, tvr.w, tvr.h)
   local flags = reaper.ImGui_WindowFlags_NoDecoration() | reaper.ImGui_WindowFlags_NoMove()
@@ -732,10 +738,25 @@ function M.frame(ctx)
     -- Collapse / expand toggle (top-right corner). Collapsed = a slim strip with just the live status:
     -- the shaping params keep their mouse gestures (wheel / middle / right click), so collapsing costs
     -- nothing while working — it's the escape hatch for cramped editors. Persisted across launches.
-    reaper.ImGui_SetCursorScreenPos(ctx, hudX + HUDW - PAD - 18, hudY + (g.hudCollapsed and 4 or PAD - 2))
-    if reaper.ImGui_SmallButton(ctx, (g.hudCollapsed and "+" or "-") .. "##hud_tog") then
+    -- A FIXED 18x18 button, right-aligned and vertically centred on its row (expanded: the Curve fader
+    -- row; collapsed: the strip) — the old SmallButton floated a few px high and read as misaligned.
+    reaper.ImGui_SetCursorScreenPos(ctx, hudX + HUDW - PAD - 18, hudY + (g.hudCollapsed and 5 or PAD + 1))
+    if reaper.ImGui_Button(ctx, "##hud_tog", 18, 18) then
       g.hudCollapsed = not g.hudCollapsed
       reaper.SetExtState("Contour", "tr_hudcollapsed", g.hudCollapsed and "1" or "0", true)
+    end
+    -- The -/+ glyph is DRAWN, geometrically centred on the button rect: the font's own +/- characters
+    -- sit off-centre inside their glyph cell, which is exactly what read as misaligned in a square.
+    -- Drawn AFTER the click handling, so it shows the NEW state the moment it's toggled.
+    if reaper.ImGui_GetItemRectMin and reaper.ImGui_GetItemRectMax and reaper.ImGui_DrawList_AddLine then
+      local bx0, by0 = reaper.ImGui_GetItemRectMin(ctx)
+      local bx1, by1 = reaper.ImGui_GetItemRectMax(ctx)
+      local bcx, bcy = (bx0 + bx1) / 2, (by0 + by1) / 2
+      local bdl = reaper.ImGui_GetWindowDrawList(ctx)
+      reaper.ImGui_DrawList_AddLine(bdl, bcx - 4, bcy, bcx + 4, bcy, 0xE3E8ECFF, 1.5)     -- minus bar
+      if g.hudCollapsed then
+        reaper.ImGui_DrawList_AddLine(bdl, bcx, bcy - 4, bcx, bcy + 4, 0xE3E8ECFF, 1.5)   -- plus upright
+      end
     end
     if g.hudCollapsed then
       reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hudY + 6)
@@ -746,6 +767,11 @@ function M.frame(ctx)
       rowY(0)
       _, p.knob = reaper.ImGui_SliderInt(ctx, "##hud_curve", p.knob, -100, 100,
         p.knob == 0 and "Curve: linear" or "Curve: %d")
+      -- Same fader treatment as the main panel: deviation fill + default notch + the dimensional cap
+      -- (which fully covers the stock grab — no styling push needed) + double-click anywhere on the
+      -- fader snaps Curve back to linear (0). g.knob re-syncs from M.params each frame.
+      common.tickReset(ctx, p, "knob", -100, 100, 0,
+        p.knob == 0 and "Curve: linear" or ("Curve: %d"):format(p.knob))
       rowY(1)
       if reaper.ImGui_RadioButton(ctx, "Power##hud_pow", p.shape == "power") then p.shape = "power" end
       reaper.ImGui_SameLine(ctx)
@@ -775,6 +801,7 @@ function M.frame(ctx)
     end
   end
   reaper.ImGui_End(ctx)
+  theme.pop(ctx)
   return true
 end
 

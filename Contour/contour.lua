@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.2.0
+-- @version 1.2.1
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -25,13 +25,17 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.2.0
---   TAKE ENVELOPES: Generate, Reduce and Transform now work on take volume/pan/mute/pitch envelopes.
---   Select the take envelope (click it on the item) and use the tools as usual. Times are converted
---   through the item's position and playrate, so stretched items behave correctly; the write span is
---   clamped to the item. Scope gains "Entire item" for take envelopes (writes across the whole item,
---   no time selection needed). Transform maps the clicked envelope's own strip when several take
---   envelopes are visible on one item.
+--   v1.2.1
+--   UI refresh: accent section headers, a segmented operation switcher, accent-filled primary buttons
+--   (Generate / Reduce / Launch Transform), and quieter secondary text.
+--   Faders reworked: dimensional head with a centre seam, a translucent fill showing the deviation
+--   from default, and detent wedges marking the default. Double-click ANYWHERE on a fader (not just
+--   its label) snaps it back to default — including the Transform panel's Curve fader.
+--   Transform panel now matches Contour's colors; its collapse button is aligned and crisp.
+--   The panel keeps its scrollbar visible (no more width jump when switching tabs) and opens no
+--   taller than the screen.
+--   Length/Frequency no longer accept typed values (they pick note values; typing edited a raw
+--   index), and typing a value into any other fader no longer hides the input box.
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua
@@ -151,17 +155,33 @@ local function loop()
   -- Theme is pushed BEFORE Begin so the window background, rounding and padding apply to the window
   -- itself; the font wraps the content inside Begin/End. push() and pop() are balanced once per frame.
   theme.push(ctx)
-  -- Open big enough to show all content by default, but keep the window MANUALLY RESIZABLE. Cond_Once
-  -- applies the size on the first frame of each launch (overriding any previously-saved smaller size
-  -- that would otherwise clip the taller themed layout), then the user can drag to any size for the
-  -- rest of the session. A light min-size stops a stray resize from collapsing it. All guarded.
+  -- Open big enough to show all content by default, but NEVER TALLER THAN THE SCREEN: the old fixed
+  -- 1050px default overflowed shorter displays (laptops), pushing the bottom controls off-screen. The
+  -- monitor work-area height caps the default AND manual resizes; it's re-read every frame, so moving
+  -- REAPER to a taller monitor raises the cap. The window stays manually resizable above the light
+  -- min-size (which stops a stray resize from collapsing it). All guarded for older ReaImGui.
+  local workH
+  if reaper.ImGui_GetMainViewport and reaper.ImGui_Viewport_GetWorkSize then
+    local vp = reaper.ImGui_GetMainViewport(ctx)
+    if vp then
+      local _, wh = reaper.ImGui_Viewport_GetWorkSize(vp)
+      workH = wh
+    end
+  end
+  local maxH = (workH and workH > 300) and (workH - 40) or 100000
   if reaper.ImGui_SetNextWindowSizeConstraints then
-    reaper.ImGui_SetNextWindowSizeConstraints(ctx, 360, 200, 100000, 100000)  -- min size; no max
+    reaper.ImGui_SetNextWindowSizeConstraints(ctx, 360, 200, 100000, maxH)
   end
   local sizeCond = (reaper.ImGui_Cond_Once and reaper.ImGui_Cond_Once())
     or (reaper.ImGui_Cond_FirstUseEver and reaper.ImGui_Cond_FirstUseEver()) or 0
-  reaper.ImGui_SetNextWindowSize(ctx, 460, 1050, sizeCond)
+  reaper.ImGui_SetNextWindowSize(ctx, 460, math.min(1050, maxH), sizeCond)
   local beginFlags = SMOOTH_OK and reaper.ImGui_WindowFlags_NoScrollWithMouse() or 0
+  -- ALWAYS show the vertical scrollbar: Generate is tall (scrolls) while Reduce/Transform are short,
+  -- so an auto scrollbar popped in/out on op switch and the content width jumped (a visible glitch).
+  -- A permanent scrollbar keeps the width stable across tabs.
+  if reaper.ImGui_WindowFlags_AlwaysVerticalScrollbar then
+    beginFlags = beginFlags | reaper.ImGui_WindowFlags_AlwaysVerticalScrollbar()
+  end
   local visible, open = reaper.ImGui_Begin(ctx, "Contour", true, beginFlags)
   if visible then
     smoothScroll()   -- ease the wheel scroll (set before content is laid out this frame)

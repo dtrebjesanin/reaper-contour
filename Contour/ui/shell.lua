@@ -7,6 +7,7 @@ local M = {}
 local generate        = require("ui.generate")
 local reduce          = require("ui.reduce")
 local transform_panel = require("ui.transform_panel")
+local theme           = require("ui.theme")
 
 local OPS = {
   { id = "generate",  label = "Generate" },
@@ -28,13 +29,20 @@ local MUTE_H   = 0x4A4A4AFF   -- gray hover
 local FLAG_SETSEL = reaper.ImGui_TabItemFlags_SetSelected and reaper.ImGui_TabItemFlags_SetSelected() or 0
 
 local function opSwitcher(ctx, state)
+  -- Segmented-control look: the three ops share the row at equal widths; the selected one is
+  -- accent-filled with bright text, the others sit muted with dim text.
+  local availW = (reaper.ImGui_GetContentRegionAvail and select(1, reaper.ImGui_GetContentRegionAvail(ctx))) or 0
+  local w = (availW and availW > 120) and math.floor((availW - 16) / 3) or nil   -- 2 gaps x ItemSpacing 8
   for i, op in ipairs(OPS) do
     if i > 1 then reaper.ImGui_SameLine(ctx) end
     local sel = state.op == op.id
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(),        sel and ACCENT or MUTE)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), sel and ACCENT_H or MUTE_H)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(),  ACCENT)
-    if reaper.ImGui_Button(ctx, op.label) then
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(),          sel and theme.C.onAccent or theme.C.textDim)
+    local clicked
+    if w then clicked = reaper.ImGui_Button(ctx, op.label, w) else clicked = reaper.ImGui_Button(ctx, op.label) end
+    if clicked then
       -- Leaving an op mid-drag would dangle its live undo block; close it cleanly.
       if op.id ~= state.op then
         if state.op == "generate" and generate.cleanup then pcall(generate.cleanup) end
@@ -42,7 +50,7 @@ local function opSwitcher(ctx, state)
       end
       state.op = op.id
     end
-    reaper.ImGui_PopStyleColor(ctx, 3)
+    reaper.ImGui_PopStyleColor(ctx, 4)
   end
 end
 
@@ -76,14 +84,18 @@ function M.draw(ctx, state, detected)
   local rv, follow = reaper.ImGui_Checkbox(ctx, "Follow selection", state.follow)
   if rv then state.follow = follow end
 
-  reaper.ImGui_Text(ctx, "Detected: " .. detected.label)
+  -- Info block: dim labels, bright values — scannable without shouting.
+  reaper.ImGui_TextColored(ctx, theme.C.textDim, "Detected:")
+  reaper.ImGui_SameLine(ctx)
+  reaper.ImGui_Text(ctx, detected.label)
   if detected.hasTimeSel then
-    reaper.ImGui_Text(ctx, ("Time selection: %.3f .. %.3f s"):format(detected.t0, detected.t1))
+    reaper.ImGui_TextColored(ctx, theme.C.textDim, "Time selection:")
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_Text(ctx, ("%.3f .. %.3f s"):format(detected.t0, detected.t1))
   else
     reaper.ImGui_TextColored(ctx, 0xC0A040FF, "No time selection")
   end
-  reaper.ImGui_Separator(ctx)
-  reaper.ImGui_Text(ctx, ("Operation: %s    Active tab: %s"):format(state.op, state.target))
+  reaper.ImGui_TextColored(ctx, theme.C.textDim, ("Operation: %s    Active tab: %s"):format(state.op, state.target))
   reaper.ImGui_Separator(ctx)
 
   -- Operation body.
