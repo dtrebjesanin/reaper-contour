@@ -11,9 +11,9 @@ for _, s in ipairs(M.SCOPE_MODES) do M.SCOPE_ITEMS = M.SCOPE_ITEMS .. s .. "\0" 
 M.SCOPE_TIMESEL, M.SCOPE_ENTIRE = 0, 1
 
 -- Resolve the write span (project seconds) from g.scope. Entire-item uses the target's fullSpan()
--- (CC item bounds, or an automation item's own bounds); envelopes are time-selection only (they have
--- no item). Automation items additionally clamp the time-selection span to their bounds, since REAPER
--- drops points outside the item. Identical to Generate's spanFor.
+-- (CC item bounds, an automation item's own bounds, or a take envelope's item bounds); TRACK envelopes
+-- are time-selection only (they have no item). Automation items AND take envelopes additionally clamp
+-- the time-selection span to their item bounds (points outside the item are dropped / never play).
 function M.spanFor(tgt, detected, g)
   local kind = tgt and tgt.kind and tgt:kind()
   if g.scope == M.SCOPE_ENTIRE and kind and kind ~= "envelope" and tgt.fullSpan then
@@ -21,7 +21,7 @@ function M.spanFor(tgt, detected, g)
     if a and b and b > a then return a, b end
   end
   local t0, t1 = detected.t0, detected.t1
-  if kind == "ai" and tgt.fullSpan then
+  if (kind == "ai" or kind == "takeenv") and tgt.fullSpan then
     local a, b = tgt:fullSpan()
     if a and b then
       if t0 < a then t0 = a end

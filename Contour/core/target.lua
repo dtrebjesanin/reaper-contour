@@ -713,6 +713,114 @@ function AI:writeBulk(_snap, points, t0, t1, opts)
 end
 
 ------------------------------------------------------------------------------
+-- TAKE ENVELOPE target. A take envelope (Volume/Pan/Mute/Pitch on a media item take) is the ENV
+-- target with a TIME CONVERSION at the boundary: its point times are TAKE-relative seconds scaled by
+-- the take's playrate — takeTime = (projTime - itemPos) * playrate — while Contour works in project
+-- seconds everywhere else. read() converts outgoing times to project; write() converts the span and
+-- point times to take time (on COPIES — callers reuse their point tables, e.g. Reduce baselines) and
+-- then reuses envReplace verbatim (the non-Ex point APIs accept take-envelope handles). The value
+-- domain needs no special casing: take envelopes are named Volume/Pan/Mute/Pitch, so envValueRange's
+-- name-based ranges apply, and SWS BR_EnvGetProperties accepts take envelopes for the unknown case.
+-- The write span is clamped to the item bounds (points beyond the item never play), mirroring AI.
+------------------------------------------------------------------------------
+local TENV = {}
+TENV.__index = TENV
+
+function TENV.new(env, take) return setmetatable({ _env = env, _take = take }, TENV) end
+function TENV:kind() return "takeenv" end
+function TENV:lane() return nil end
+function TENV:channel() return 0 end
+function TENV:valueRange() return envValueRange(self._env) end
+
+-- Live item position + playrate (re-read per call: the item can move / playrate can change between
+-- interactions). Returns (itemPos, playrate, item) or nil when the take has no item.
+function TENV:_timebase()
+  local item = reaper.GetMediaItemTake_Item(self._take)
+  if not item then return nil end
+  local pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION") or 0
+  local rate = (reaper.GetMediaItemTakeInfo_Value and reaper.GetMediaItemTakeInfo_Value(self._take, "D_PLAYRATE")) or 1
+  if not rate or rate <= 0 then rate = 1 end
+  return pos, rate, item
+end
+
+-- The item's project-time bounds (the "Entire item" extent, and the write-span clamp).
+function TENV:fullSpan()
+  local pos, _, item = self:_timebase()
+  if not item then return nil end
+  local len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+  if not len or len <= 0 then return nil end
+  return pos, pos + len
+end
+
+-- Read points as { {time, value, shape, tension, sel}, ... } with times in PROJECT seconds
+-- (converted from the take domain). nil t0/t1 = unbounded. Shapes in ENVELOPE convention.
+function TENV:read(t0, t1)
+  local env = self._env
+  if not env or not (reaper.CountEnvelopePoints and reaper.GetEnvelopePoint) then return {} end
+  local pos, rate = self:_timebase()
+  if not pos then return {} end
+  local out = {}
+  local cnt = reaper.CountEnvelopePoints(env)
+  for i = 0, (cnt or 0) - 1 do
+    local ok, tm, val, shape, tension, sel = reaper.GetEnvelopePoint(env, i)
+    if ok then
+      local pt = pos + tm / rate                         -- take-relative -> project seconds
+      if (t0 == nil or pt >= t0) and (t1 == nil or pt <= t1) then
+        out[#out + 1] = { time = pt, value = val, shape = shape, tension = tension, sel = sel and true or false }
+      end
+    end
+  end
+  return out
+end
+
+function TENV:write(points, t0, t1, opts)
+  opts = opts or {}
+  local env = self._env
+  if not env then return nil, "No take envelope" end
+  if not points or #points == 0 then return 0, nil end
+  local pos, rate = self:_timebase()
+  if not pos then return nil, "No media item for take" end
+  -- Clamp the span to the item bounds (REAPER keeps points beyond the item, but they never play;
+  -- an un-clamped span would also pile out-of-item points onto the edges). Mirrors AI:write.
+  local lo, hi = self:fullSpan()
+  if lo then
+    if t0 < lo then t0 = lo end
+    if t1 > hi then t1 = hi end
+  end
+  if t1 <= t0 then return 0, nil end
+  -- Convert to TAKE time on COPIES: callers reuse their point tables across frames/writes (e.g. the
+  -- Reduce baseline), so mutating times in place would corrupt them for the next re-derivation.
+  local conv = {}
+  for i, pt in ipairs(points) do
+    conv[i] = { time = (pt.time - pos) * rate, value = pt.value,
+                shape = pt.shape, tension = pt.tension, sel = pt.sel }
+  end
+  local ct0, ct1 = (t0 - pos) * rate, (t1 - pos) * rate
+  local vmin, vmax = self:valueRange()
+  local function body() return envReplace(env, nil, conv, ct0, ct1, vmin, vmax, opts.rawShape) end
+  local ok, res
+  if opts.noUndo then
+    ok, res = pcall(body)
+  else
+    reaper.Undo_BeginBlock2(0)
+    ok, res = pcall(body)
+    reaper.Undo_EndBlock2(0, opts.undoLabel or "Contour: Generate take-envelope LFO", -1)  -- -1 = ALL
+  end
+  if reaper.UpdateArrange then reaper.UpdateArrange() end
+  if not ok then return nil, "take-envelope write failed: " .. tostring(res) end
+  -- Silent-destructive guard (mirrors ENV:write): the range delete already happened.
+  if #points > 0 and res == 0 then return nil, "no take-envelope points written (insert failed)" end
+  return res, nil
+end
+
+-- Live path mirrors ENV: per-frame replace; the range delete clears the prior frame's points, so
+-- live edits never compound. snapshot() is an inert marker for the shared live orchestration.
+function TENV:snapshot() return { env = self._env, take = self._take } end
+function TENV:writeBulk(_snap, points, t0, t1, opts)
+  return self:write(points, t0, t1, opts)
+end
+
+------------------------------------------------------------------------------
 -- Factory
 ------------------------------------------------------------------------------
 function M.fromContext(detected)
@@ -724,13 +832,13 @@ function M.fromContext(detected)
   if tgt == "envelope" then
     local d = detected.details
     if not d or not d.env then return nil, "No envelope selected" end
-    -- Track envelopes use PROJECT time (what we generate in). Take envelopes use item-relative
-    -- time (playrate/offset) — support those next. Envelope_GetParentTake returns the take only
-    -- for take envelopes (nil for track envelopes).
+    -- Track envelopes use PROJECT time (what we generate in). TAKE envelopes are item-relative time
+    -- scaled by playrate — the TENV target owns that conversion at its boundary. Envelope_GetParentTake
+    -- returns the take only for take envelopes (nil for track envelopes).
     if reaper.Envelope_GetParentTake then
       local take = reaper.Envelope_GetParentTake(d.env)
       if take and reaper.ValidatePtr2(0, take, "MediaItem_Take*") then
-        return nil, "Take-envelope support is coming next — select a track envelope"
+        return TENV.new(d.env, take), nil
       end
     end
     return ENV.new(d.env), nil
@@ -751,6 +859,7 @@ end
 
 M.CC = CC
 M.AI = AI
+M.TENV = TENV
 -- Canonical CC<->envelope shape swap: CC 0=square/1=linear  <>  ENV 0=linear/1=square.
 -- Shapes 2-5 are identical in both conventions. Exposed so callers (e.g. tests) can
 -- assert the same rule without embedding it a second time.

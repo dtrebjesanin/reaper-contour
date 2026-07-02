@@ -21,6 +21,16 @@ end
 local function envDescriptor(env)
   local _, ename = reaper.GetEnvelopeName(env, "")
   if ename == "" then ename = "(unnamed)" end
+  -- TAKE envelope (Volume/Pan/Mute/Pitch on a media item take): its own descriptor, checked FIRST —
+  -- take envelopes have no automation items, and the target layer needs the take handle for the
+  -- project<->take time conversion. Target id stays "envelope" (same tab/gates); details.take marks it.
+  if reaper.Envelope_GetParentTake then
+    local take = reaper.Envelope_GetParentTake(env)
+    if take and (not reaper.ValidatePtr2 or reaper.ValidatePtr2(0, take, "MediaItem_Take*")) then
+      return { target = "envelope", label = "Take envelope: " .. ename,
+               details = { env = env, take = take } }
+    end
+  end
   -- Is an automation item within this envelope selected? Then it's the AI target.
   local selAi, aiCount = nil, reaper.CountAutomationItems(env)
   for i = 0, aiCount - 1 do

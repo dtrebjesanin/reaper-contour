@@ -94,12 +94,33 @@ local function trackviewRect()
   return { l = l, t = t, r = r, b = b, w = r - l, h = b - t }
 end
 
--- envelope lane rect for a TRACK envelope, as an ARRANGE-RELATIVE top offset + height (NOT screen coords).
+-- envelope lane rect, as an ARRANGE-RELATIVE top offset + height (NOT screen coords).
 -- On macOS I_TCPSCREENY is in a different coordinate system than the JS_Window trackview rect (top-down vs
 -- bottom-up, different origin), so screen coords for the lane can't be reconciled with the (correctly
 -- converted) trackview. I_TCPY + I_TCPY_USED is arrange-relative and platform-consistent; the caller adds
 -- it to the converted trackview top (scaled by the trackview height ratio for HiDPI).
-local function laneRect(env)
+-- TRACK envelope: the envelope's own TCP lane. TAKE envelope (`take` given): with SEVERAL take
+-- envelopes visible on one item REAPER stacks them in strips, and I_TCPY_USED/I_TCPH_USED report the
+-- clicked envelope's OWN strip (track-relative, same fields as the TCP-lane path) — so prefer those.
+-- Fall back to the ITEM BODY rect (track I_TCPY + item I_LASTY/I_LASTH) when the strip fields come
+-- back empty, which is exact for the single-envelope case.
+local function laneRect(env, take)
+  if take then
+    local item = reaper.GetMediaItemTake_Item(take)
+    if not item then return nil end
+    local track = reaper.GetMediaItem_Track(item)
+    if not track then return nil end
+    local ty = reaper.GetMediaTrackInfo_Value(track, "I_TCPY")
+    local ey = reaper.GetEnvelopeInfo_Value(env, "I_TCPY_USED")    -- the envelope's strip within the item stack
+    local eh = reaper.GetEnvelopeInfo_Value(env, "I_TCPH_USED")
+    if eh and eh > 0 then
+      return { topOff = (ty or 0) + (ey or 0), h = eh }
+    end
+    local iy = reaper.GetMediaItemInfo_Value(item, "I_LASTY")      -- item Y within the track (px)
+    local ih = reaper.GetMediaItemInfo_Value(item, "I_LASTH")      -- item height (px)
+    if not ih or ih <= 0 then return nil end
+    return { topOff = (ty or 0) + (iy or 0), h = ih }
+  end
   local track = reaper.GetEnvelopeInfo_Value(env, "P_TRACK")
   if not track then return nil end
   local ty = reaper.GetMediaTrackInfo_Value(track, "I_TCPY")        -- track TCP Y, relative to arrange top
@@ -174,10 +195,12 @@ end
 -- none). Returns region[], t0, t1, all[]  — or nil, message.
 local function readScope(detected, scope)
   local sel, all = {}, {}
-  if detected.target == "cc" then
-    -- CC: read the active lane's events via the target (project seconds, value 0-127, CC shape).
+  local isTakeEnv = detected.target == "envelope" and detected.details and detected.details.take
+  if detected.target == "cc" or isTakeEnv then
+    -- CC + TAKE envelopes read via the target abstraction: both need a time conversion the target owns
+    -- (CC: ppq -> project seconds; take envelope: take-relative seconds -> project seconds).
     local tgt = target.fromContext(detected)
-    if not tgt then return nil, "No MIDI lane" end
+    if not tgt then return nil, "No target" end
     for _, p in ipairs(tgt:read(nil, nil)) do
       local pt = { t = p.time, v = p.value, shape = p.shape, tension = p.tension, sel = p.sel and true or false }
       all[#all+1] = pt
@@ -272,6 +295,8 @@ function M.start(ctx, detected)
   g = { detected = detected, scope = scope, tgt = tgt, env = detected.details.env,
         orig = region, keep = keep, t0 = t0, t1 = t1, vlo = vlo, vhi = vhi,
         snap = snap, zone = nil,
+        -- TAKE envelope: laneRect maps values over the ITEM body instead of a TCP envelope lane.
+        envTake = (detected.target == "envelope") and detected.details.take or nil,
         -- CC coordinate frame (env/AI leave these nil and use the arrange-lane path):
         isCC = (detected.target == "cc"), take = detected.details.take,
         midiview = cc and cc.midiview, ccLeftTick = cc and cc.leftTick,
@@ -283,6 +308,7 @@ function M.start(ctx, detected)
         undoFlag = (detected.target == "cc") and 4 or -1,
         undoLabel = (detected.target == "cc") and "Contour: Transform MIDI CC"
                     or (detected.target == "ai") and "Contour: Transform automation item"
+                    or (detected.target == "envelope" and detected.details.take) and "Contour: Transform take envelope"
                     or "Contour: Transform envelope",
         -- Reset restores these: the region + outside points as captured at launch, plus the widest time
         -- extent ever written this session (so widening stretches/warps leave no stray points behind).
@@ -483,7 +509,7 @@ function M.frame(ctx)
   else
     local vt0, vt1
     tvr, vt0, vt1 = viewNow()
-    local lr = laneRect(g.env)
+    local lr = laneRect(g.env, g.envTake)   -- take envelopes map over the item body
     if not tvr or not lr or vt1 <= vt0 then return true end
     -- Native -> ImGui (macOS Y-flip + HiDPI): convert the trackview corners and the lane's yTop/yBot, then
     -- build the maps in ImGui space. viewNow already consumed the NATIVE l/r for GetSet_ArrangeView2, so
@@ -778,6 +804,7 @@ end
 -- the multi-lane geometry math is unit-testable headlessly (tests/test_cclane_stack.lua).
 M._parseVellanes = parseVellanes   -- (chunk) -> { {lane, h}, ... } top-to-bottom
 M._laneSlot      = laneSlot        -- (lanes, lane) -> height, bottomOffset | nil
+M._laneRect      = laneRect        -- (env, take?) -> { topOff, h } | nil  (arrange-relative)
 M._hudRectNow    = function() return g and g.hudRect end   -- live HUD rect (read-only; nil when idle)
 
 return M

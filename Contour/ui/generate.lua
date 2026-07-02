@@ -473,9 +473,10 @@ end
 -- first open until the user picks a shape.
 local function canGenerate(detected, g)
   if not (detected and currentShapeId(g) ~= "none" and detected.details) then return false end
-  -- A time selection is required in Time-selection scope AND always for envelopes (time-sel only);
-  -- Entire-item scope (CC/AI) uses fullSpan() and needs no time selection.
-  local needTimeSel = g.scope == common.SCOPE_TIMESEL or detected.target == "envelope"
+  -- A time selection is required in Time-selection scope AND always for TRACK envelopes (time-sel
+  -- only); Entire-item scope (CC / AI / take envelope) uses fullSpan() and needs no time selection.
+  local isTrackEnv = detected.target == "envelope" and not (detected.details and detected.details.take)
+  local needTimeSel = g.scope == common.SCOPE_TIMESEL or isTrackEnv
   if needTimeSel and not detected.hasTimeSel then return false end
   if detected.target == "cc" then
     return g.ccNum >= 0 and g.ccNum <= 127 and detected.details.take ~= nil
@@ -778,10 +779,12 @@ function M.draw(ctx, state, detected)
     end
   end
 
-  -- == Scope == (CC + Automation Item: write across the Time selection OR the Entire item.
-  -- Envelopes are TIME-SELECTION ONLY — a track envelope has no item — so the selector is hidden
-  -- for them and the span is always the time selection.)
-  if not (detected and detected.target == "envelope") then
+  -- == Scope == (CC / Automation Item / TAKE envelope: write across the Time selection OR the Entire
+  -- item. TRACK envelopes are TIME-SELECTION ONLY — they have no item — so the selector is hidden for
+  -- them and the span is always the time selection.)
+  local isTrackEnv = detected and detected.target == "envelope"
+    and not (detected.details and detected.details.take)
+  if not isTrackEnv then
     local changed, idx = reaper.ImGui_Combo(ctx, "Scope##gen_scope", g.scope, common.SCOPE_ITEMS, #common.SCOPE_ITEMS)
     if changed and idx ~= g.scope then g.scope = idx; acc(true) end
   end
@@ -1095,7 +1098,8 @@ function M.run(state, detected, g)
     fail("Select a MIDI CC lane, a track envelope, or an automation item")
     return
   end
-  if (g.scope == common.SCOPE_TIMESEL or tk == "envelope") and not detected.hasTimeSel then
+  local isTrackEnv = tk == "envelope" and not (detected.details and detected.details.take)
+  if (g.scope == common.SCOPE_TIMESEL or isTrackEnv) and not detected.hasTimeSel then
     fail("Make a time selection") return
   end
   if tk == "cc" and (g.ccNum < 0 or g.ccNum > 127) then fail("Set a valid CC# (0-127)") return end

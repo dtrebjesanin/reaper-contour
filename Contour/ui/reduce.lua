@@ -38,9 +38,10 @@ local function ui(state)
   return state.red
 end
 
--- Scope choices per target (track envelopes have no "item", so no Entire-item option).
-local function scopeChoices(t)
-  if t == "envelope" then
+-- Scope choices per target (TRACK envelopes have no "item", so no Entire-item option; TAKE envelopes
+-- do have one — their item — so they get the full list like CC/AI).
+local function scopeChoices(t, isTake)
+  if t == "envelope" and not isTake then
     return { { label = "Time selection", v = SCOPE_TIMESEL }, { label = "Selected points", v = SCOPE_SELECTED } }
   end
   return { { label = "Time selection", v = SCOPE_TIMESEL },
@@ -296,7 +297,8 @@ local function readyFor(detected, g)
     elseif t == "envelope" then return detected.details.env ~= nil
     else return detected.details.env ~= nil and detected.details.aiIndex ~= nil end
   end
-  local needTimeSel = (g.scope == SCOPE_TIMESEL) or (t == "envelope")
+  local isTrackEnv = (t == "envelope") and not (detected.details and detected.details.take)
+  local needTimeSel = (g.scope == SCOPE_TIMESEL) or isTrackEnv
   if needTimeSel and not detected.hasTimeSel then return false end
   if t == "cc" then return detected.details.take ~= nil
   elseif t == "envelope" then return detected.details.env ~= nil
@@ -324,7 +326,7 @@ function M.draw(ctx, state, detected)
   -- Scope selector (target-appropriate options; maps the combo index to a scope constant).
   local t = detected and detected.target
   do
-    local choices = scopeChoices(t)
+    local choices = scopeChoices(t, detected and detected.details and detected.details.take ~= nil)
     local cur, items = 0, ""
     for i, c in ipairs(choices) do
       items = items .. c.label .. "\0"

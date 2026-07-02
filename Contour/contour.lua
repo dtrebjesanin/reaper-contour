@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.1.5
+-- @version 1.2.0
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -25,14 +25,13 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.1.5
---   Transform: works with multiple CC lanes visible in the MIDI editor — the tool maps and edits the
---   active (last-clicked) lane's own strip instead of refusing.
---   Transform: fixed the overlay position on macOS and HiDPI displays (the box, handles and panel now
---   land on the lane for envelopes, automation items and CC).
---   Transform: the floating panel can be dragged anywhere by an empty spot (for that session;
---   double-click an empty spot to send it back) and collapsed to a slim strip with the -/+ button.
---   Transform: refuses cleanly at launch when the take can't be read, instead of failing every write.
+--   v1.2.0
+--   TAKE ENVELOPES: Generate, Reduce and Transform now work on take volume/pan/mute/pitch envelopes.
+--   Select the take envelope (click it on the item) and use the tools as usual. Times are converted
+--   through the item's position and playrate, so stretched items behave correctly; the write span is
+--   clamped to the item. Scope gains "Entire item" for take envelopes (writes across the whole item,
+--   no time selection needed). Transform maps the clicked envelope's own strip when several take
+--   envelopes are visible on one item.
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua

@@ -58,6 +58,14 @@ function M.reset()
   -- The MIDI item chunk ccSetup parses. Default: ONE visible CC lane (the active one) + a CFGEDITVIEW
   -- (leftTick 0, pxPerTick 1.0). Multi-lane tests overwrite this with a stacked-VELLANE chunk.
   M.itemChunk = ("CFGEDITVIEW 0 1.0 0 0 0\nVELLANE %d 90 0\n"):format(M.CC_LANE)
+  -- TAKE-envelope fixture: env handle "TENV" on take "TAKE", whose item "TITEM" sits at 3s, length 5s,
+  -- playrate 2.0. Point times are TAKE-RELATIVE seconds (range 0..10 maps to project 3..8), so any
+  -- consumer that forgets the conversion shows up immediately in the tests.
+  M.takeEnvPoints = {
+    { time = 0.0,  value = -0.5, shape = 0, tension = 0, sel = true },
+    { time = 4.0,  value =  0.6, shape = 0, tension = 0, sel = true },
+    { time = 10.0, value = -0.2, shape = 0, tension = 0, sel = true },
+  }
 end
 M.reset()
 
@@ -135,11 +143,19 @@ R.GetSetAutomationItemInfo = function(_e, _i, key)
 end
 R.CountAutomationItems = function() return 1 end
 
--- ---- Envelope READ (track + automation item) -----------------------------------------------------
-R.CountEnvelopePoints = function() return #M.envPoints end
-R.GetEnvelopePoint = function(_e, i)
-  local p = M.envPoints[i + 1]; if not p then return false end
+-- ---- Envelope READ (track + take envelope + automation item) --------------------------------------
+-- "TENV" (the take envelope) reads the take-relative fixture; any other env handle reads envPoints.
+R.CountEnvelopePoints = function(env) return (env == "TENV") and #M.takeEnvPoints or #M.envPoints end
+R.GetEnvelopePoint = function(env, i)
+  local list = (env == "TENV") and M.takeEnvPoints or M.envPoints
+  local p = list[i + 1]; if not p then return false end
   return true, p.time, p.value, p.shape, p.tension or 0, p.sel and true or false
+end
+-- take-envelope plumbing: parent take, its item, and the item/take geometry the time conversion uses
+R.Envelope_GetParentTake = function(env) if env == "TENV" or env == "TENV0" then return "TAKE" end return nil end
+R.GetMediaItemTakeInfo_Value = function(take, key)
+  if take == "TAKE" and key == "D_PLAYRATE" then return 2.0 end
+  return 1.0
 end
 R.CountEnvelopePointsEx = function() return #M.aiPoints end
 R.GetEnvelopePointEx = function(_e, _idx, i)
@@ -162,8 +178,14 @@ end
 R.Envelope_SortPointsEx = function() M.rec.sortEx = M.rec.sortEx + 1 end
 
 -- ---- Envelope geometry (overlay laneRect) --------------------------------------------------------
-R.GetEnvelopeInfo_Value = function(_e, key)
-  if key == "P_TRACK"      then return "TRACK" end   -- truthy pointer (passed to GetMediaTrackInfo_Value)
+R.GetEnvelopeInfo_Value = function(env, key)
+  if key == "P_TRACK" then return "TRACK" end        -- truthy pointer (passed to GetMediaTrackInfo_Value)
+  if env == "TENV" then                              -- take envelope: its OWN strip within the item
+    if key == "I_TCPY_USED" then return 25 end
+    if key == "I_TCPH_USED" then return 30 end
+    return 0
+  end
+  if env == "TENV0" then return 0 end                -- take envelope whose strip fields come back empty
   if key == "I_TCPY_USED"  then return 10 end
   if key == "I_TCPH_USED"  then return 80 end
   return 0
@@ -226,9 +248,18 @@ end
 R.MIDI_SetCCShape = function(_t, i, shape, tension) local e = M.ccList[i + 1]; if e then e.shape = shape; e.tension = tension end end
 R.MIDI_DeleteCC = function(_t, i) table.remove(M.ccList, i + 1) end
 R.MIDI_EnumSelCC      = function(_t, idx) return (idx < 0) and 0 or -1 end
-R.GetMediaItemTake_Item  = function() return "ITEM" end
+R.GetMediaItemTake_Item  = function(take) return (take == "TAKE") and "TITEM" or "ITEM" end
 R.GetMediaItem_Track     = function() return "TRACK" end
-R.GetMediaItemInfo_Value = function() return 0 end
+-- "TITEM" (the take-envelope item) has real geometry; the CC item ("ITEM") keeps the old zeros.
+R.GetMediaItemInfo_Value = function(item, key)
+  if item == "TITEM" then
+    if key == "D_POSITION" then return 3.0 end
+    if key == "D_LENGTH"   then return 5.0 end
+    if key == "I_LASTY"    then return 20 end   -- item Y within the track (px)
+    if key == "I_LASTH"    then return 60 end   -- item height (px)
+  end
+  return 0
+end
 R.MarkTrackItemsDirty    = function() end
 R.PreventUIRefresh       = function() end
 R.UpdateArrange          = function() end
