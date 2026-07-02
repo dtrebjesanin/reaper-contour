@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" name="Contour" commit="8a39b064b1d4f9db6472c54a3bd2013406e35a5c">
+<index version="1" name="Contour" commit="77279c632be162d2ffb53ea5b1a9cbc80af0c92c">
   <category name="Contour">
     <reapack name="contour.lua" type="script" desc="Contour">
       <metadata>
@@ -283,6 +283,39 @@ index), and typing a value into any other fader no longer hides the input box.]]
         <source file="ui/shell.lua">https://github.com/dtrebjesanin/reaper-contour/raw/8a39b064b1d4f9db6472c54a3bd2013406e35a5c/Contour/ui/shell.lua</source>
         <source file="ui/theme.lua">https://github.com/dtrebjesanin/reaper-contour/raw/8a39b064b1d4f9db6472c54a3bd2013406e35a5c/Contour/ui/theme.lua</source>
         <source file="ui/transform_panel.lua">https://github.com/dtrebjesanin/reaper-contour/raw/8a39b064b1d4f9db6472c54a3bd2013406e35a5c/Contour/ui/transform_panel.lua</source>
+      </version>
+      <version name="1.2.2" author="Danilo Trebjesanin" time="2026-07-02T18:29:12Z">
+        <changelog><![CDATA[v1.2.2
+Transform: the box now stays within the target's real boundaries after extreme transforms.
+Values clamp to the lane range; times clamp to the item bounds for automation items, take
+envelopes and MIDI CC (the same rule as js_Mouse editing), and to project start for track
+envelopes. The tool's memory always matches what's actually written, so chained transforms
+anchor on real data.
+Transform: a shape flattened (or compressed) to nothing keeps a minimum-size box, so the
+handles stay visible and grabbable instead of piling up under the Warp handle.
+Transform: the box renders live while you drag, so the boundary is visible the whole time —
+including the moment it pins against an item edge or the lane rail.]]></changelog>
+        <source main="main">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/contour.lua</source>
+        <source main="main" file="contour_transform.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/contour_transform.lua</source>
+        <source file="core/arrangecoords.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/core/arrangecoords.lua</source>
+        <source file="core/context.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/core/context.lua</source>
+        <source file="core/customshape.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/core/customshape.lua</source>
+        <source file="core/genpreset.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/core/genpreset.lua</source>
+        <source file="core/lfo.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/core/lfo.lua</source>
+        <source file="core/midistream.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/core/midistream.lua</source>
+        <source file="core/reduce.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/core/reduce.lua</source>
+        <source file="core/shapes.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/core/shapes.lua</source>
+        <source file="core/starters.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/core/starters.lua</source>
+        <source file="core/target.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/core/target.lua</source>
+        <source file="core/transform.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/core/transform.lua</source>
+        <source file="ui/common.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/ui/common.lua</source>
+        <source file="ui/drawpad.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/ui/drawpad.lua</source>
+        <source file="ui/generate.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/ui/generate.lua</source>
+        <source file="ui/overlay.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/ui/overlay.lua</source>
+        <source file="ui/reduce.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/ui/reduce.lua</source>
+        <source file="ui/shell.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/ui/shell.lua</source>
+        <source file="ui/theme.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/ui/theme.lua</source>
+        <source file="ui/transform_panel.lua">https://github.com/dtrebjesanin/reaper-contour/raw/77279c632be162d2ffb53ea5b1a9cbc80af0c92c/Contour/ui/transform_panel.lua</source>
       </version>
     </reapack>
   </category>
