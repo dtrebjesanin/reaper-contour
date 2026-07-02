@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.2.1
+-- @version 1.2.2
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -25,17 +25,16 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.2.1
---   UI refresh: accent section headers, a segmented operation switcher, accent-filled primary buttons
---   (Generate / Reduce / Launch Transform), and quieter secondary text.
---   Faders reworked: dimensional head with a centre seam, a translucent fill showing the deviation
---   from default, and detent wedges marking the default. Double-click ANYWHERE on a fader (not just
---   its label) snaps it back to default — including the Transform panel's Curve fader.
---   Transform panel now matches Contour's colors; its collapse button is aligned and crisp.
---   The panel keeps its scrollbar visible (no more width jump when switching tabs) and opens no
---   taller than the screen.
---   Length/Frequency no longer accept typed values (they pick note values; typing edited a raw
---   index), and typing a value into any other fader no longer hides the input box.
+--   v1.2.2
+--   Transform: the box now stays within the target's real boundaries after extreme transforms.
+--   Values clamp to the lane range; times clamp to the item bounds for automation items, take
+--   envelopes and MIDI CC (the same rule as js_Mouse editing), and to project start for track
+--   envelopes. The tool's memory always matches what's actually written, so chained transforms
+--   anchor on real data.
+--   Transform: a shape flattened (or compressed) to nothing keeps a minimum-size box, so the
+--   handles stay visible and grabbable instead of piling up under the Warp handle.
+--   Transform: the box renders live while you drag, so the boundary is visible the whole time —
+--   including the moment it pins against an item edge or the lane rail.
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua

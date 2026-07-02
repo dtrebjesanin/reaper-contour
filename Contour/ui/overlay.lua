@@ -346,12 +346,36 @@ end
 local HR = 10  -- handle hit radius (screen px)
 local function hit(mx, my, hx, hy) return math.abs(mx-hx) <= HR and math.abs(my-hy) <= HR end
 
+-- The target's REAL time boundaries: item bounds for automation items, take envelopes AND MIDI CC
+-- (the same rule juliansader's Multi Tool enforces — its mouse tick is clamped into the visible item
+-- on every move), project start for track envelopes (right side unbounded — envelopes extend forever).
+local function targetTimeBounds()
+  local kind = g.tgt and g.tgt.kind and g.tgt:kind()
+  if kind == "ai" or kind == "takeenv" or kind == "cc" then
+    if g.tgt.fullSpan then return g.tgt:fullSpan() end
+    return nil, nil
+  elseif kind == "envelope" then
+    return 0, nil
+  end
+  return nil, nil
+end
+
 -- Write the transformed points back, under PreventUIRefresh. FULL RE-WRITE each frame: the transformed
 -- region points PLUS the preserved (outside) points = every point. The delete-range spans them all, so
 -- stretch can push points beyond the original span without being clamped, pulling a stretch back never
 -- leaves stragglers, and the untouched automation outside the selection is re-inserted unchanged.
 -- Values stay in the storage domain (rawShape; no ScaleTo) — same as Reduce/Generate.
 local function writeTransformed(newPts)
+  -- Clamp to the target's REAL boundaries before writing — and therefore before these points become
+  -- the next baseline (the SAME table is baked on release / one-shot): values to the lane range, and
+  -- times to targetTimeBounds. Keeping the written data and the baseline identical is what keeps the
+  -- re-rendered box inside the boundaries the actual points piled up against.
+  local tlo, thi = targetTimeBounds()
+  for _, p in ipairs(newPts) do
+    if p.v < g.vlo then p.v = g.vlo elseif p.v > g.vhi then p.v = g.vhi end
+    if tlo and p.t < tlo then p.t = tlo end
+    if thi and p.t > thi then p.t = thi end
+  end
   local cMin, cMax
   for _, p in ipairs(newPts) do
     if not cMin or p.t < cMin then cMin = p.t end
@@ -470,7 +494,7 @@ function M.frame(ctx)
       writeTransformed(newPts)
       markEditDirty()
       reaper.Undo_EndBlock2(0, "Contour: Transform " .. op, g.undoFlag)
-      g.orig = newPts
+      g.orig = newPts   -- boundary-clamped inside writeTransformed above
       -- CC: refresh off the just-written take so a later edit can't resurrect removed points. If the
       -- re-snapshot fails (take gone/broken), end the tool cleanly — the edit is already committed.
       if not resyncSnap() then return false end
@@ -534,11 +558,24 @@ function M.frame(ctx)
     Y    = function(v)  return ac.valueToY(v, g.vlo, g.vhi, iyTop, iyBot) end
     yToV = function(y)  return ac.yToValue(y, g.vlo, g.vhi, iyTop, iyBot) end
   end
-  local b = bounds(g.orig)
+  -- LIVE box: during a drag the box tracks the IN-FLIGHT result (g.pending, one frame behind), not the
+  -- pre-drag shape — so you see the boundary the whole time, including the moment the transform hits a
+  -- clamp (item edge / lane rail) and stops growing. Anchoring math is unaffected: drags derive from
+  -- g.box (snapshotted at grab) and re-transform g.orig every frame.
+  local b = bounds(g.pending or g.orig)
   local x0,x1 = X(b.tmin), X(b.tmax)
   local yt,yb = Y(b.vmax), Y(b.vmin)
+  -- Degenerate boxes stay usable: an extreme transform can flatten the shape to a single value (or
+  -- compress it to a sliver of time), collapsing the box to a line — the handles then stack onto the
+  -- same spots and the last-drawn one (Warp) hides the Scale pair. Enforce a minimum ON-SCREEN box
+  -- size around the centre. Geometry only, purely a grab affordance: the value/time mapping and the
+  -- drag anchors still come from the real data bounds, so recovery drags behave normally.
+  local MINPX = 44
+  if (yb - yt) < MINPX then local c = (yt + yb) / 2; yt, yb = c - MINPX / 2, c + MINPX / 2 end
+  if (x1 - x0) < MINPX then local c = (x0 + x1) / 2; x0, x1 = c - MINPX / 2, c + MINPX / 2 end
   local cy = (yt+yb)/2
   local cx = (x0+x1)/2
+  g.boxPx = { x0 = x0, y0 = yt, x1 = x1, y1 = yb }   -- the on-screen rect (read by the test seam)
 
   -- HUD panel geometry (drawn later, INSIDE the overlay window). Its home is the ORIGINAL spot: just
   -- off the selection BOX's top-right corner (rides next to the shape), clamped into the view — so in
@@ -675,6 +712,7 @@ function M.frame(ctx)
   -- end drag (button released): bake the result into orig (so a re-grab chains), close this drag's undo
   -- point, and keep the tool open for another grab.
   if g.zone and not down then
+    -- pending was boundary-clamped inside writeTransformed, so baking it keeps baseline == written data
     g.orig = g.pending or g.orig; g.pending = nil; g.zone = nil
     if g.dragUndo then
       markEditDirty()  -- CC: register the edit before closing (flag-4 entry is empty without it)
@@ -833,5 +871,7 @@ M._parseVellanes = parseVellanes   -- (chunk) -> { {lane, h}, ... } top-to-botto
 M._laneSlot      = laneSlot        -- (lanes, lane) -> height, bottomOffset | nil
 M._laneRect      = laneRect        -- (env, take?) -> { topOff, h } | nil  (arrange-relative)
 M._hudRectNow    = function() return g and g.hudRect end   -- live HUD rect (read-only; nil when idle)
+M._boundsNow     = function() return g and bounds(g.orig) end   -- baked-baseline bounds (read-only)
+M._boxPxNow      = function() return g and g.boxPx end          -- on-screen box rect (read-only)
 
 return M
