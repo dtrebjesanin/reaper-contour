@@ -447,6 +447,14 @@ local function writeTransformed(newPts)
   if not ok or res == nil then g.status = "write failed" end
 end
 
+-- Baked baselines must be TIME-ASCENDING: transforms that reorder points (Reverse mirrors times in
+-- place; a Stretch dragged across its anchor negates the factor) otherwise hand warp2d a descending
+-- list, whose anti-fold guard then stacks the whole shape at the right edge on the next Warp drag.
+local function sortByTime(pts)
+  table.sort(pts, function(a, b) return a.t < b.t end)
+  return pts
+end
+
 -- CC edits only register in the undo history if the take's item is marked dirty before EndBlock2 (a flag-4
 -- UNDO_STATE_ITEMS entry records nothing otherwise). env/AI need neither. Call right before every EndBlock2.
 local function markEditDirty()
@@ -533,7 +541,7 @@ function M.frame(ctx)
       writeTransformed(newPts)
       markEditDirty()
       reaper.Undo_EndBlock2(0, "Contour: Transform " .. op, g.undoFlag)
-      g.orig = newPts   -- boundary-clamped inside writeTransformed above
+      g.orig = sortByTime(newPts)   -- boundary-clamped inside writeTransformed above; ascending for warp
       -- CC: refresh off the just-written take so a later edit can't resurrect removed points. If the
       -- re-snapshot fails (take gone/broken), end the tool cleanly — the edit is already committed.
       if not resyncSnap() then return false end
@@ -771,7 +779,7 @@ function M.frame(ctx)
   -- point, and keep the tool open for another grab.
   if g.zone and not down then
     -- pending was boundary-clamped inside writeTransformed, so baking it keeps baseline == written data
-    g.orig = g.pending or g.orig; g.pending = nil; g.zone = nil
+    g.orig = sortByTime(g.pending or g.orig); g.pending = nil; g.zone = nil
     if g.dragUndo then
       markEditDirty()  -- CC: register the edit before closing (flag-4 entry is empty without it)
       reaper.Undo_EndBlock2(0, g.undoLabel, g.undoFlag); g.dragUndo = false
