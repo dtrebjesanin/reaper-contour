@@ -394,6 +394,17 @@ end
 -- seconds per point through the tempo map (monotonic, so point order is preserved). Hz/free rates
 -- keep the seconds axis: 2 Hz means 2 per second at any tempo. buildParams' seconds-based cycleSec
 -- stays for the panel PREVIEW (abstract 1-second window) and as the fallback without TimeMap2.
+-- The FINAL generated point owns the segment LEAVING the write span - it runs to whatever kept
+-- event follows, so a curved ease there imposes the LFO's curvature on material the user didn't
+-- touch (a sine over bar 3 bent the first triangle ramp of bar 4). Neutralize curved tails
+-- (2..5, CC convention) to linear; step tails (0: Square / S&H) keep holding, and points without
+-- a shape (dense generic sampler) keep their write-layer default.
+local function neutralizeTail(pts)
+  local last = pts and pts[#pts]
+  if last and last.shape and last.shape >= 2 then last.shape = 1; last.tension = 0 end
+  return pts
+end
+
 local function generateSpan(g, st0, st1, params)
   if g.rateMode == RATE_MUSICAL and reaper.TimeMap2_timeToQN and reaper.TimeMap2_QNToTime then
     local qn0 = reaper.TimeMap2_timeToQN(0, st0)
@@ -406,11 +417,14 @@ local function generateSpan(g, st0, st1, params)
       local okGen, pts = pcall(lfo.generate, { t0 = qn0, t1 = qn1 }, params)
       if okGen and pts then
         for _, pt in ipairs(pts) do pt.time = reaper.TimeMap2_QNToTime(0, pt.time) end
+        neutralizeTail(pts)
       end
       return okGen, pts
     end
   end
-  return pcall(lfo.generate, { t0 = st0, t1 = st1 }, params)
+  local okGen, pts = pcall(lfo.generate, { t0 = st0, t1 = st1 }, params)
+  if okGen and pts then neutralizeTail(pts) end
+  return okGen, pts
 end
 
 -- Core generate+write. Returns (count|nil, errString|nil). `noUndo` true => the caller
