@@ -68,6 +68,30 @@ local function activeCCLane(midiEditor)
   return lane, nil
 end
 
+-- Resolve the MIDI channel the CC target operates on. The lane's existing events know their channel
+-- (hardware controllers and imported MIDI routinely live on channels other than 1); when the lane is
+-- empty or holds several channels, the editor's default insert channel decides. Never hardcode 0:
+-- that made Reduce/Transform see an empty lane and Generate write an inaudible second stream.
+local function resolveCCChannel(take, midiEditor, lane)
+  local seen, n = nil, 0
+  if reaper.MIDI_CountEvts and reaper.MIDI_GetCC then
+    local _, _, ccCount = reaper.MIDI_CountEvts(take)
+    for i = 0, (ccCount or 0) - 1 do
+      local ok, _, _, _, chanmsg, ch, msg2 = reaper.MIDI_GetCC(take, i)
+      if ok and chanmsg == CC_STATUS and msg2 == lane and ch ~= seen then
+        if seen ~= nil then n = 2 break end
+        seen, n = ch, 1
+      end
+    end
+  end
+  if n == 1 then return seen end
+  if reaper.MIDIEditor_GetSetting_int and midiEditor then
+    local ch = reaper.MIDIEditor_GetSetting_int(midiEditor, "default_note_chan")
+    if ch and ch >= 0 and ch <= 15 then return ch end
+  end
+  return 0
+end
+
 ------------------------------------------------------------------------------
 -- MIDI CC target
 ------------------------------------------------------------------------------
@@ -885,7 +909,7 @@ function M.fromContext(detected)
     if not d or not d.take then return nil, "No MIDI take" end
     local lane, laneErr = activeCCLane(d.midiEditor)
     if laneErr then return nil, laneErr end
-    return CC.new(d.take, d.midiEditor, lane, 0), nil
+    return CC.new(d.take, d.midiEditor, lane, resolveCCChannel(d.take, d.midiEditor, lane)), nil
   end
 
   return nil, "Unknown target"

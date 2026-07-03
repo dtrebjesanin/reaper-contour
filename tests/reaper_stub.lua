@@ -55,6 +55,7 @@ function M.reset()
     { ppq = 1.0 * M.PPQ, chan = 0, lane = M.CC_LANE, val = 64, shape = 1, tension = 0, sel = true },
     { ppq = 3.0 * M.PPQ, chan = 0, lane = M.CC_LANE, val = 90, shape = 1, tension = 0, sel = true },
   }
+  M.DEFAULT_CHAN = 0   -- the editor's default insert channel (MIDIEditor_GetSetting_int "default_note_chan")
   -- The MIDI item chunk ccSetup parses. Default: ONE visible CC lane (the active one) + a CFGEDITVIEW
   -- (leftTick 0, pxPerTick 1.0). Multi-lane tests overwrite this with a stacked-VELLANE chunk.
   M.itemChunk = ("CFGEDITVIEW 0 1.0 0 0 0\nVELLANE %d 90 0\n"):format(M.CC_LANE)
@@ -213,7 +214,10 @@ R.GetSet_LoopTimeRange = function() return 0.0, 4.0 end
 -- ---- MIDI editor read (CC value mapping in panels) -----------------------------------------------
 R.MIDIEditor_GetActive    = function() return "ME" end
 R.MIDIEditor_GetTake      = function() return "TAKE" end
-R.MIDIEditor_GetSetting_int = function() return M.CC_LANE end   -- last_clicked_cc_lane
+R.MIDIEditor_GetSetting_int = function(_me, setting)
+  if setting == "default_note_chan" then return M.DEFAULT_CHAN end
+  return M.CC_LANE   -- last_clicked_cc_lane
+end
 R.MIDI_GetPPQPosFromProjTime = function(_t, sec) return sec * M.PPQ end
 R.MIDI_GetProjTimeFromPPQPos = function(_t, ppq) return ppq / M.PPQ end
 R.ValidatePtr2 = function() return true end
