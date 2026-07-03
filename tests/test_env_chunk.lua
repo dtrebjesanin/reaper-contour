@@ -61,4 +61,13 @@ h.test("no chunk API (old builds/stubs): English name fallback still classifies"
   h.almost(lo, -1); h.almost(hi, 1)
 end)
 
+h.test("range is cached per target: the live loop must not re-fetch the chunk every frame", function()
+  reaper.GetEnvelopeName = function() return true, "Volume" end
+  local fetches = 0
+  reaper.GetEnvelopeStateChunk = function() fetches = fetches + 1; return true, "<VOLENV2\n>" end
+  local tgt = target.fromContext(detEnv())
+  for _ = 1, 5 do tgt:valueRange() end      -- liveBulkWrite calls this once per frame
+  h.eq(fetches, 1, "one chunk fetch per target, not per frame")
+end)
+
 h.run()

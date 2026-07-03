@@ -69,27 +69,34 @@ local function activeCCLane(midiEditor)
 end
 
 -- Resolve the MIDI channel the CC target operates on. The lane's existing events know their channel
--- (hardware controllers and imported MIDI routinely live on channels other than 1); when the lane is
--- empty or holds several channels, the editor's default insert channel decides. Never hardcode 0:
+-- (hardware controllers and imported MIDI routinely live on channels other than 1); never hardcode 0:
 -- that made Reduce/Transform see an empty lane and Generate write an inaudible second stream.
+-- Single data channel -> that channel. Mixed channels -> the editor's default insert channel when it
+-- is among the data, else the lane's DOMINANT channel (so the tool always sees what dominates the
+-- lane instead of silently matching nothing). Empty lane -> editor default, then 0.
 local function resolveCCChannel(take, midiEditor, lane)
-  local seen, n = nil, 0
+  local counts, distinct, best, bestN = {}, 0, nil, 0
   if reaper.MIDI_CountEvts and reaper.MIDI_GetCC then
     local _, _, ccCount = reaper.MIDI_CountEvts(take)
     for i = 0, (ccCount or 0) - 1 do
       local ok, _, _, _, chanmsg, ch, msg2 = reaper.MIDI_GetCC(take, i)
-      if ok and chanmsg == CC_STATUS and msg2 == lane and ch ~= seen then
-        if seen ~= nil then n = 2 break end
-        seen, n = ch, 1
+      if ok and chanmsg == CC_STATUS and msg2 == lane then
+        local n = (counts[ch] or 0) + 1
+        counts[ch] = n
+        if n == 1 then distinct = distinct + 1 end
+        if n > bestN or (n == bestN and best ~= nil and ch < best) then best, bestN = ch, n end
       end
     end
   end
-  if n == 1 then return seen end
+  if distinct == 1 then return best end
+  local def
   if reaper.MIDIEditor_GetSetting_int and midiEditor then
     local ch = reaper.MIDIEditor_GetSetting_int(midiEditor, "default_note_chan")
-    if ch and ch >= 0 and ch <= 15 then return ch end
+    if ch and ch >= 0 and ch <= 15 then def = ch end
   end
-  return 0
+  if distinct == 0 then return def or 0 end
+  if def and counts[def] then return def end
+  return best
 end
 
 ------------------------------------------------------------------------------
@@ -103,7 +110,9 @@ function CC.new(take, midiEditor, lane, chan)
     _take    = take,
     _editor  = midiEditor,
     _lane    = lane,            -- CC number 0..127
-    _chan    = chan or 0,       -- 0-based MIDI channel
+    _chan    = chan,            -- explicit 0-based channel; nil = resolve from the lane's data
+    _chanFixed = chan ~= nil,   -- constructor channels stay fixed (tests / explicit callers)
+    _chanLane  = chan ~= nil and lane or nil,
   }, CC)
 end
 
@@ -114,7 +123,17 @@ function CC:valueRange() return 0, 127 end
 -- CC number resolved from the editor at construction (panel may override the write target).
 function CC:lane() return self._lane end
 
-function CC:channel() return self._chan end
+-- The channel this target operates on, resolved LAZILY for the CURRENT lane: the panels pin
+-- `_lane` to their CC# spinner after construction, and the clicked lane's channel is not
+-- necessarily the write lane's — resolving once at construction wrote lane A's channel onto
+-- lane B. Re-resolves whenever _lane changed since the last lookup.
+function CC:channel()
+  if not self._chanFixed and self._chanLane ~= self._lane then
+    self._chan = resolveCCChannel(self._take, self._editor, self._lane)
+    self._chanLane = self._lane
+  end
+  return self._chan or 0
+end
 
 -- fullSpan() -> t0, t1 (project seconds): the target's "entire" extent for the Entire-item scope.
 -- For CC that is the MIDI item's project bounds.
@@ -129,14 +148,30 @@ local function loopedSourceEnd(take, itemEnd)
   if not item then return nil end
   local looped = reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC")
   if not looped or looped == 0 then return nil end
-  if not (reaper.GetMediaItemTake_Source and reaper.GetMediaSourceLength) then return nil end
-  local src = reaper.GetMediaItemTake_Source(take)
-  if not src then return nil end
-  local len, isQN = reaper.GetMediaSourceLength(src)
-  if not len or len <= 0 then return nil end
   local srcEnd
-  if isQN and reaper.MIDI_GetProjQNFromPPQPos and reaper.TimeMap2_QNToTime then
-    srcEnd = reaper.TimeMap2_QNToTime(0, reaper.MIDI_GetProjQNFromPPQPos(take, 0) + len)
+  -- SWS knows the source length in TICKS: converting that tick through the take's own map is exact
+  -- for any playrate and tempo map. Preferred when available.
+  if reaper.BR_GetMidiSourceLenPPQ and reaper.MIDI_GetProjTimeFromPPQPos then
+    local lenPPQ = reaper.BR_GetMidiSourceLenPPQ(take)
+    if lenPPQ and lenPPQ > 0 then
+      srcEnd = reaper.MIDI_GetProjTimeFromPPQPos(take, lenPPQ)
+    end
+  end
+  -- Native fallback: source length in QN. Source QNs compress by the take PLAYRATE in project QN
+  -- (MIDI timing is beat-based, so the scaling is linear) — forgetting the division overshot the
+  -- boundary 2x on a playrate-2 take.
+  if not srcEnd and reaper.GetMediaItemTake_Source and reaper.GetMediaSourceLength
+     and reaper.MIDI_GetProjQNFromPPQPos and reaper.TimeMap2_QNToTime then
+    local src = reaper.GetMediaItemTake_Source(take)
+    if src then
+      -- NB: own line — `src and f()` would truncate GetMediaSourceLength's 2 returns to 1.
+      local len, isQN = reaper.GetMediaSourceLength(src)
+      if len and len > 0 and isQN then
+        local rate = (reaper.GetMediaItemTakeInfo_Value and reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")) or 1
+        if not rate or rate <= 0 then rate = 1 end
+        srcEnd = reaper.TimeMap2_QNToTime(0, reaper.MIDI_GetProjQNFromPPQPos(take, 0) + len / rate)
+      end
+    end
   end
   if srcEnd and srcEnd < itemEnd - 1e-9 then return srcEnd end
   return nil
@@ -179,7 +214,7 @@ function CC:read(t0, t1)
   local take = self._take
   if not take then return {} end
   if not (reaper.MIDI_GetCC and reaper.MIDI_CountEvts) then return {} end
-  local lane, chan = self._lane, self._chan or 0
+  local lane, chan = self._lane, self:channel()
   local ppq0 = (t0 ~= nil and reaper.MIDI_GetPPQPosFromProjTime) and reaper.MIDI_GetPPQPosFromProjTime(take, t0) or nil
   local ppq1 = (t1 ~= nil and reaper.MIDI_GetPPQPosFromProjTime) and reaper.MIDI_GetPPQPosFromProjTime(take, t1) or nil
   local _, _, ccCount = reaper.MIDI_CountEvts(take)
@@ -287,7 +322,7 @@ function CC:write(points, t0, t1, opts)
     return nil, "Standard CC lanes (0-127) only for now"
   end
 
-  local chan    = self._chan or 0
+  local chan    = self:channel()
   local ccShape = opts.ccShape or 1        -- default linear = backward compatible
   local tension = opts.bezierTension or 0.0
   if not points or #points == 0 then return 0, nil end
@@ -417,7 +452,7 @@ function CC:writeBulk(snapshot, points, t0, t1, opts)
   if writeLane == nil or writeLane < 0 or writeLane > 127 then
     return nil, "Standard CC lanes (0-127) only for now"
   end
-  local chan    = self._chan or 0
+  local chan    = self:channel()
   local ccShape = opts.ccShape or 1
   points = points or {}
 
@@ -641,7 +676,14 @@ local function envValueRange(env)
   return lo, hi
 end
 
-function ENV:valueRange() return envValueRange(self._env) end
+-- Cached per instance: the live-drag paths call valueRange() every frame on the gesture's cached
+-- target, and envValueRange now pulls the envelope STATE CHUNK (type classification) — too heavy
+-- for a 30 Hz loop on dense envelopes. Targets are rebuilt per operation (fromContext), so a
+-- Preferences change is picked up on the next Generate click / Transform launch.
+function ENV:valueRange()
+  if not self._vr then self._vr = { envValueRange(self._env) } end
+  return self._vr[1], self._vr[2]
+end
 
 -- CC shape ints differ from ENVELOPE shape ints for 0/1: CC 0=square, 1=linear; ENVELOPE
 -- 0=linear, 1=square (2=slow start/end, 3=fast start, 4=fast end, 5=bezier are identical in both).
@@ -779,7 +821,10 @@ function AI.new(env, idx) return setmetatable({ _env = env, _idx = idx }, AI) en
 function AI:kind() return "ai" end
 function AI:lane() return nil end
 function AI:channel() return 0 end
-function AI:valueRange() return envValueRange(self._env) end
+function AI:valueRange()   -- cached: see ENV:valueRange
+  if not self._vr then self._vr = { envValueRange(self._env) } end
+  return self._vr[1], self._vr[2]
+end
 
 -- The item's project-time bounds [position, position+length], or nil if unavailable.
 function AI:bounds()
@@ -871,7 +916,10 @@ function TENV.new(env, take) return setmetatable({ _env = env, _take = take }, T
 function TENV:kind() return "takeenv" end
 function TENV:lane() return nil end
 function TENV:channel() return 0 end
-function TENV:valueRange() return envValueRange(self._env) end
+function TENV:valueRange() -- cached: see ENV:valueRange
+  if not self._vr then self._vr = { envValueRange(self._env) } end
+  return self._vr[1], self._vr[2]
+end
 
 -- Live item position + playrate (re-read per call: the item can move / playrate can change between
 -- interactions). Returns (itemPos, playrate, item) or nil when the take has no item.
@@ -992,7 +1040,7 @@ function M.fromContext(detected)
     if not d or not d.take then return nil, "No MIDI take" end
     local lane, laneErr = activeCCLane(d.midiEditor)
     if laneErr then return nil, laneErr end
-    return CC.new(d.take, d.midiEditor, lane, resolveCCChannel(d.take, d.midiEditor, lane)), nil
+    return CC.new(d.take, d.midiEditor, lane), nil   -- channel resolves lazily per write lane
   end
 
   return nil, "Unknown target"
