@@ -57,6 +57,8 @@ function M.reset()
   }
   M.DEFAULT_CHAN = 0   -- the editor's default insert channel (MIDIEditor_GetSetting_int "default_note_chan")
   M.TAKE_NUM = 0       -- the active take's IP_TAKENUMBER (multi-take chunk-slicing tests override)
+  M.LOOP_SRC = 0       -- TITEM's B_LOOPSRC flag (loop-extended MIDI item tests set 1)
+  M.SRC_LEN_QN = 0     -- MIDI source length in QN (0 = unset; tick 0 sits at project 0, QN = sec*2)
   -- The MIDI item chunk ccSetup parses. Default: ONE visible CC lane (the active one) + a CFGEDITVIEW
   -- (leftTick 0, pxPerTick 1.0). Multi-lane tests overwrite this with a stacked-VELLANE chunk.
   M.itemChunk = ("CFGEDITVIEW 0 1.0 0 0 0\nVELLANE %d 90 0\n"):format(M.CC_LANE)
@@ -263,9 +265,13 @@ R.GetMediaItemInfo_Value = function(item, key)
     if key == "D_LENGTH"   then return 5.0 end
     if key == "I_LASTY"    then return 20 end   -- item Y within the track (px)
     if key == "I_LASTH"    then return 60 end   -- item height (px)
+    if key == "B_LOOPSRC"  then return M.LOOP_SRC end
   end
   return 0
 end
+R.GetMediaItemTake_Source = function() return "SRC" end
+R.GetMediaSourceLength    = function() return M.SRC_LEN_QN, true end            -- MIDI sources report QN
+R.MIDI_GetProjQNFromPPQPos = function(_t, ppq) return (ppq / M.PPQ) * 2 end     -- via time, 2 QN/sec
 R.MarkTrackItemsDirty    = function() end
 R.PreventUIRefresh       = function() end
 R.UpdateArrange          = function() end

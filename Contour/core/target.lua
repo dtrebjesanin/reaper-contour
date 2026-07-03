@@ -118,6 +118,46 @@ function CC:channel() return self._chan end
 
 -- fullSpan() -> t0, t1 (project seconds): the target's "entire" extent for the Entire-item scope.
 -- For CC that is the MIDI item's project bounds.
+-- First-iteration end of a LOOP-EXTENDED MIDI take, in project time (nil when not looped / not
+-- determinable). REAPER's PPQ<->time conversions do NOT wrap loop iterations: a time inside
+-- iteration 2+ converts to ticks past the source end, so edits landed outside the take — inaudible,
+-- and able to push the end marker and shift every repeat. The editable window of a looped item is
+-- its FIRST iteration (exactly what the MIDI editor shows); content written there repeats in every
+-- pass. MIDI sources report their length in QN, anchored via tick 0's project QN.
+local function loopedSourceEnd(take, itemEnd)
+  local item = reaper.GetMediaItemTake_Item(take)
+  if not item then return nil end
+  local looped = reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC")
+  if not looped or looped == 0 then return nil end
+  if not (reaper.GetMediaItemTake_Source and reaper.GetMediaSourceLength) then return nil end
+  local src = reaper.GetMediaItemTake_Source(take)
+  if not src then return nil end
+  local len, isQN = reaper.GetMediaSourceLength(src)
+  if not len or len <= 0 then return nil end
+  local srcEnd
+  if isQN and reaper.MIDI_GetProjQNFromPPQPos and reaper.TimeMap2_QNToTime then
+    srcEnd = reaper.TimeMap2_QNToTime(0, reaper.MIDI_GetProjQNFromPPQPos(take, 0) + len)
+  end
+  if srcEnd and srcEnd < itemEnd - 1e-9 then return srcEnd end
+  return nil
+end
+
+-- Clamp a write span to the first loop iteration. Returns t0, t1  or  nil, error when the span lies
+-- entirely past the loop boundary.
+local function clampToLoop(take, t0, t1)
+  local item = reaper.GetMediaItemTake_Item(take)
+  if not item then return t0, t1 end
+  local pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION") or 0
+  local len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH") or 0
+  local loopEnd = loopedSourceEnd(take, pos + len)
+  if not loopEnd then return t0, t1 end
+  if t0 >= loopEnd then
+    return nil, "Selection is past the item's loop boundary — edit the first loop; it repeats in every pass"
+  end
+  if t1 > loopEnd then t1 = loopEnd end
+  return t0, t1
+end
+
 function CC:fullSpan()
   local take = self._take
   if not take then return nil end
@@ -126,7 +166,8 @@ function CC:fullSpan()
   local pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
   local len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
   if not pos or not len or len <= 0 then return nil end
-  return pos, pos + len
+  local loopEnd = loopedSourceEnd(take, pos + len)
+  return pos, loopEnd or (pos + len)
 end
 
 -- Read this lane+channel's CC events as { {time, value, shape, tension, sel}, ... } (time-ascending;
@@ -251,6 +292,8 @@ function CC:write(points, t0, t1, opts)
   local tension = opts.bezierTension or 0.0
   if not points or #points == 0 then return 0, nil end
 
+  t0, t1 = clampToLoop(take, t0, t1)       -- looped item: never write past the first iteration
+  if not t0 then return nil, t1 end
   local ppq0 = reaper.MIDI_GetPPQPosFromProjTime(take, t0)
   local ppq1 = reaper.MIDI_GetPPQPosFromProjTime(take, t1)
 
@@ -378,6 +421,8 @@ function CC:writeBulk(snapshot, points, t0, t1, opts)
   local ccShape = opts.ccShape or 1
   points = points or {}
 
+  t0, t1 = clampToLoop(take, t0, t1)       -- looped item: never write past the first iteration
+  if not t0 then return nil, t1 end
   local ppq0 = reaper.MIDI_GetPPQPosFromProjTime(take, t0)
   local ppq1 = reaper.MIDI_GetPPQPosFromProjTime(take, t1)
 
