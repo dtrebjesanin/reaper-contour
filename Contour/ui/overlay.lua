@@ -563,6 +563,18 @@ function M.frame(ctx)
   -- clamp (item edge / lane rail) and stops growing. Anchoring math is unaffected: drags derive from
   -- g.box (snapshotted at grab) and re-transform g.orig every frame.
   local b = bounds(g.pending or g.orig)
+  -- DISPLAY safety clamp: stored points can hold values/times beyond the target's CURRENT extent
+  -- (range preference changed after writing, other tools, imports — REAPER draws such points clipped
+  -- at the rail). The box hugs the real extent the same way, instead of scaling the overshoot into a
+  -- box that shoots off-screen. Geometry only; the data is untouched until a transform writes it.
+  local function cl(v, lo, hi)
+    if lo and v < lo then return lo end
+    if hi and v > hi then return hi end
+    return v
+  end
+  b.vmin, b.vmax = cl(b.vmin, g.vlo, g.vhi), cl(b.vmax, g.vlo, g.vhi)
+  local dtlo, dthi = targetTimeBounds()
+  b.tmin, b.tmax = cl(b.tmin, dtlo, dthi), cl(b.tmax, dtlo, dthi)
   local x0,x1 = X(b.tmin), X(b.tmax)
   local yt,yb = Y(b.vmax), Y(b.vmin)
   -- Degenerate boxes stay usable: an extreme transform can flatten the shape to a single value (or

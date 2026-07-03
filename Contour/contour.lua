@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.2.2
+-- @version 1.2.3
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -25,16 +25,14 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.2.2
---   Transform: the box now stays within the target's real boundaries after extreme transforms.
---   Values clamp to the lane range; times clamp to the item bounds for automation items, take
---   envelopes and MIDI CC (the same rule as js_Mouse editing), and to project start for track
---   envelopes. The tool's memory always matches what's actually written, so chained transforms
---   anchor on real data.
---   Transform: a shape flattened (or compressed) to nothing keeps a minimum-size box, so the
---   handles stay visible and grabbable instead of piling up under the Warp handle.
---   Transform: the box renders live while you drag, so the boundary is visible the whole time —
---   including the moment it pins against an item edge or the lane rail.
+--   v1.2.3
+--   Envelope ranges now follow your REAPER settings: the volume envelope range preference
+--   (0/+6/+12/+24 dB, fader scaling included) and the pitch envelope range (semitones). Contour
+--   assumed the factory defaults, which capped volume at +6.02 dB and pitch at +/-3 semitones for
+--   anyone with wider settings — Generate, Transform and the box mapping all use the real lane now.
+--   Transform: the box hugs the lane/item even when points hold values beyond the current range
+--   (e.g. written under a wider range setting that was later changed back — REAPER draws those
+--   points clipped at the rail, and now the box does too instead of shooting off-screen).
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua

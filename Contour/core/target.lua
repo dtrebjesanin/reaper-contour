@@ -470,6 +470,24 @@ function ENV:channel() return 0 end
 -- of the nonlinear conversion SQUASHING it. Built-in types: name-based linear bounds converted ONCE
 -- to storage for fader-scaled envelopes (mode ~= 0). Unknown types: SWS BR bounds (already storage).
 -- Shared by ENV and AI: an automation item's value domain IS its parent envelope's.
+-- Read an integer REAPER config variable (nil when unavailable). Native get_config_var_string first;
+-- SWS SNM_GetIntConfigVar as backup for very old REAPER builds.
+local function configInt(name)
+  if reaper.get_config_var_string then
+    local ok, s = reaper.get_config_var_string(name)
+    if ok then return tonumber(s) end
+  end
+  if reaper.SNM_GetIntConfigVar then
+    local v = reaper.SNM_GetIntConfigVar(name, -0x7FFFFFFF)
+    if v and v ~= -0x7FFFFFFF then return v end
+  end
+  return nil
+end
+
+-- "volenvrange" selector (with the fader-scaling bit1 cleared) -> LINEAR lane maximum. Same decoding
+-- as SWS BR_Envelope::LaneMaxValue: 0 = -inf..+6dB (2), 1 = ..0dB (1), 4 = ..+12dB (4), 5 = ..+24dB (16).
+local VOL_RANGE_MAX = { [0] = 2, [1] = 1, [4] = 4, [5] = 16 }
+
 local function envValueRange(env)
   local mode = (reaper.GetEnvelopeScalingMode and reaper.GetEnvelopeScalingMode(env)) or 0
   local _, name = reaper.GetEnvelopeName(env, "")
@@ -477,14 +495,30 @@ local function envValueRange(env)
   local lo, hi
   if name:find("pan") or name:find("width") then lo, hi = -1, 1
   elseif name:find("mute") then lo, hi = 0, 1
-  elseif name:find("pitch") then lo, hi = -3, 3
-  elseif name:find("volume") then lo, hi = 0, 2
+  elseif name:find("pitch") then
+    -- The pitch DISPLAY range is the global "pitchenvrange" preference — semitones in the LOW byte
+    -- (the snap setting lives in the higher bits). Storage is plain semitones. Hardcoding ±3 clamped
+    -- a user's 24-semitone envelope; NOTE: SWS BR_EnvGetProperties is NOT a fix here — it reports the
+    -- chunk-type constant (±255 for pitch), not the configured lane range.
+    local r = configInt("pitchenvrange")
+    r = r and (r & 0xFF) or 0
+    if r < 1 then r = 3 end
+    lo, hi = -r, r
+  elseif name:find("volume") then
+    -- The volume lane ceiling is the global "volenvrange" preference (bit1 = fader scaling; the rest
+    -- selects the range). Hardcoding 0..2 ceilinged +12/+24 dB lanes at +6.02 dB. The linear top is
+    -- converted to the STORAGE domain below when the envelope is fader-scaled — skipping that put the
+    -- Transform box hundreds of lane-heights off-screen (values ~700 against a 0..2 range).
+    local v = configInt("volenvrange")
+    local top = v and VOL_RANGE_MAX[v & ~2]
+    lo, hi = 0, top or 2
   end
   if lo then
     if mode ~= 0 and reaper.ScaleToEnvelopeMode then          -- linear bounds -> storage domain
       lo, hi = reaper.ScaleToEnvelopeMode(mode, lo), reaper.ScaleToEnvelopeMode(mode, hi)
     end
   elseif reaper.BR_EnvAlloc and reaper.BR_EnvGetProperties and reaper.BR_EnvFree then
+    -- Unknown envelope types (FX parameters): SWS BR properties carry the parameter's real range.
     local ok, a, b = pcall(function()
       local br = reaper.BR_EnvAlloc(env, false)
       if not br then return nil end

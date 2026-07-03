@@ -126,4 +126,39 @@ h.test("extreme right-stretch on MIDI CC: baked times clamp to the item end", fu
   overlay.finish()
 end)
 
+-- STORED overshoot: points can hold values beyond the CURRENT lane range (written under a wider range
+-- preference that was later changed back, other tools, imports). REAPER draws them clipped at the
+-- rail — the box must hug the lane the same way at LAUNCH, not scale the overshoot off-screen.
+h.test("launch on points holding values beyond the lane range: box top hugs the lane top", function()
+  stub.reset()
+  stub.envPoints = {
+    { time = 0.0, value = 5.0,  shape = 0, tension = 0, sel = true },   -- far above the -1..1 lane
+    { time = 2.0, value = -0.5, shape = 0, tension = 0, sel = true },
+    { time = 4.0, value = 0.2,  shape = 0, tension = 0, sel = true },
+  }
+  overlay.params = { knob = 0, shape = "power", symmetrical = false, flipMode = "absolute" }
+  local started, serr = overlay.start(CTX, detEnv())
+  h.truthy(started, "start: " .. tostring(serr))
+  overlay.frame(CTX)
+  local px = overlay._boxPxNow()
+  h.almost(px.y0, 130, 1e-6, "box top = lane top (Y at vhi=1), not off-screen at Y(5)")
+  h.almost(px.y1, 190, 1e-6, "box bottom = Y(-0.5), unaffected")
+  overlay.finish()
+end)
+
+h.test("launch on an AI point beyond the item end: box right edge hugs the item end", function()
+  stub.reset()
+  stub.aiPoints = {
+    { time = 1.0,  value = 0.3,  shape = 0, tension = 0, sel = true },
+    { time = 12.0, value = -0.3, shape = 0, tension = 0, sel = true },  -- beyond the item end (10)
+  }
+  overlay.params = { knob = 0, shape = "power", symmetrical = false, flipMode = "absolute" }
+  local started, serr = overlay.start(CTX, detAI())
+  h.truthy(started, "start: " .. tostring(serr))
+  overlay.frame(CTX)
+  local px = overlay._boxPxNow()
+  h.truthy(px.x1 <= 800 + 1e-6, "box right edge at the item end (x 800), got " .. tostring(px.x1))
+  overlay.finish()
+end)
+
 h.run()
