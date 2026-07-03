@@ -103,7 +103,16 @@ end
 local ESC = { ["%"] = "%25", ["|"] = "%7C", ["~"] = "%7E", [";"] = "%3B", [","] = "%2C" }
 local function esc(s) return (tostring(s):gsub("[%%|~;,]", ESC)) end
 local function unesc(s) return (tostring(s):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)) end
-local function num(v) return string.format("%.6g", tonumber(v) or 0) end
+-- Always dot-decimal, whatever the C numeric locale says: %.6g follows the locale, and a plugin
+-- flipping it (the classic REAPER setlocale bug) would emit comma decimals INTO this comma-delimited
+-- format, scrambling the store on the next save.
+local function num(v) return (string.format("%.6g", tonumber(v) or 0):gsub(",", ".")) end
+-- tonumber that also accepts comma decimals: a store saved during a flipped-locale session (pre-fix)
+-- holds "0,5"-style fields where the pattern split allows it; don't lose them on read.
+local function tonum(s)
+  if s == nil then return nil end
+  return tonumber(s) or tonumber((tostring(s):gsub(",", ".")))
+end
 
 -- Serialize a single point list to the ";"-separated "x,y,shape,tension" form (no name). Reused by
 -- M.encode and by genpreset (to embed a custom drawing inside a Generate preset).
@@ -120,8 +129,8 @@ function M.decodePoints(str)
   for ptStr in ((str or "") .. ";"):gmatch("(.-);") do
     if ptStr ~= "" then
       local x, y, sh, ten = ptStr:match("^([^,]*),([^,]*),([^,]*),([^,]*)$")
-      if x then pts[#pts + 1] = { x = tonumber(x) or 0, y = tonumber(y) or 0,
-        shape = tonumber(sh) or 1, tension = tonumber(ten) or 0 } end
+      if x then pts[#pts + 1] = { x = tonum(x) or 0, y = tonum(y) or 0,
+        shape = tonum(sh) or 1, tension = tonum(ten) or 0 } end
     end
   end
   return pts

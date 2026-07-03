@@ -13,7 +13,13 @@ local M = {}
 local ESC = { ["%"] = "%25", ["|"] = "%7C", ["~"] = "%7E", [";"] = "%3B", ["="] = "%3D" }
 local function esc(s) return (tostring(s):gsub("[%%|~;=]", ESC)) end
 local function unesc(s) return (tostring(s):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)) end
-local function num(v) return string.format("%.6g", tonumber(v) or 0) end
+-- Always dot-decimal, whatever the C numeric locale says (see core/customshape.num: a plugin flipping
+-- the locale would otherwise emit comma decimals into the store), and read both forms back.
+local function num(v) return (string.format("%.6g", tonumber(v) or 0):gsub(",", ".")) end
+local function tonum(s)
+  if s == nil then return nil end
+  return tonumber(s) or tonumber((tostring(s):gsub(",", ".")))
+end
 
 function M.encode(store)
   local out = {}
@@ -39,7 +45,7 @@ function M.decode(str)
       for kv in ((parts[2] or "") .. ";"):gmatch("(.-);") do
         if kv ~= "" then
           local k, v = kv:match("^([^=]*)=([^=]*)$")
-          if k and tonumber(v) then params[unesc(k)] = tonumber(v) end
+          if k and tonum(v) then params[unesc(k)] = tonum(v) end
         end
       end
       local preset = { name = unesc(parts[1] or ""), params = params }
