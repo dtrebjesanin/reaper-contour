@@ -17,7 +17,7 @@
 --   ## Dependencies (install separately via ReaPack — NOT bundled)
 --   - **ReaImGui** — the panel UI
 --   - **js_ReaScriptAPI** — the Transform overlay
---   - **SWS extension** — the Transform overlay
+--   - **SWS extension** — optional (sharpens looped-item and FX-envelope edge cases)
 --
 --   ## Actions installed
 --   - **Contour** — the main panel

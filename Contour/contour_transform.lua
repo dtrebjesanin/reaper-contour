@@ -16,11 +16,12 @@ package.path = src .. "?.lua;" .. package.path
 do local _, _, _, cmdID = reaper.get_action_context()
    if cmdID and cmdID ~= 0 then reaper.SetExtState("Contour", "tr_cmd", tostring(cmdID), true) end end
 
--- dependency guards
+-- dependency guards. SWS is deliberately NOT gated: every BR_* call in the codebase is an optional,
+-- guarded fallback (FX-parameter ranges come from the PARMENV chunk natively; BR_GetMidiSourceLenPPQ
+-- only sharpens looped-item detection) — refusing to launch without it blocked users for no reason.
 local missing = {}
 if not reaper.ImGui_CreateContext then missing[#missing+1] = "ReaImGui" end
 if not reaper.JS_Window_FindChildByID then missing[#missing+1] = "js_ReaScriptAPI" end
-if not reaper.BR_GetMouseCursorContext then missing[#missing+1] = "SWS" end
 if #missing > 0 then
   reaper.ShowMessageBox("Contour Transform needs: " .. table.concat(missing, ", ") ..
     ".\nInstall via ReaPack, then retry.", "Contour Transform — missing dependency", 0)
