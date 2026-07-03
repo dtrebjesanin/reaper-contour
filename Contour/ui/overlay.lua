@@ -157,9 +157,29 @@ local function laneSlot(lanes, lane)
   return lanes[idx].h, off
 end
 
+-- One item chunk carries EVERY take's <SOURCE> block, each with its own CFGEDITVIEW/VELLANE lines —
+-- matching the whole chunk read take 1's view state (and lane stack) while the editor showed take 2.
+-- Slice to the ACTIVE take's section: take k's block starts at the k-th "\nTAKE...\nNAME" boundary
+-- (take 0's data sits before the first boundary, straight after the item header) — the same walk
+-- juliansader's Multi Tool does. Falls back to the whole chunk if the boundaries don't line up.
+local function activeTakeSlice(chunk, take)
+  local takeNum = reaper.GetMediaItemTakeInfo_Value
+                  and reaper.GetMediaItemTakeInfo_Value(take, "IP_TAKENUMBER") or 0
+  local startPos = 1
+  for _ = 1, takeNum do
+    local p = chunk:find("\nTAKE[^\n]-\nNAME", startPos + 1)
+    if not p then return chunk end
+    startPos = p
+  end
+  local endPos = chunk:find("\nTAKE[^\n]-\nNAME", startPos + 1)
+  return chunk:sub(startPos, endPos)
+end
+
 -- MIDI CC coordinate setup (juliansader's CFGEDITVIEW/VELLANE approach, decoded from a live editor):
---   CFGEDITVIEW field 1 = leftmost tick at the midiview's left edge; field 2 = pixels per tick.
---   VELLANE lines (one per visible lane, top-to-bottom) = each lane's pixel height.
+--   CFGEDITVIEW field 1 = leftmost tick at the midiview's left edge; field 2 = the horizontal zoom.
+--   CFGEDIT field 19 = the editor's timebase: 0/4 = beats (zoom is px per TICK), 1/2 = project
+--   synced/time (zoom is px per SECOND — tick math there put the box ~1000x off and wrote CC at
+--   wrong times). VELLANE lines (one per visible lane, top-to-bottom) = each lane's pixel height.
 -- Multiple visible lanes are supported: the tool maps the ACTIVE (last-clicked) lane's own strip via its
 -- slot in the VELLANE stack (laneSlot). Read ONCE at launch (the overlay then locks the view by capturing
 -- input); the midiview RECT is re-read live each frame in M.frame, so moving/resizing the editor still
@@ -175,7 +195,10 @@ local function ccSetup(detected, lane)
   if not item then return nil, "no media item" end
   local okc, chunk = reaper.GetItemStateChunk(item, "", false)  -- NB: keep on its own line — `item and f()` truncates f's 2 returns to 1
   if not (okc and chunk) then return nil, "no item chunk" end
-  local leftTick, pxPerTick = chunk:match("CFGEDITVIEW%s+(%-?[%d%.]+)%s+(%-?[%d%.]+)")
+  chunk = activeTakeSlice(chunk, take)
+  -- (%S+) not [%d%.]: REAPER writes tiny floats in scientific notation ("6.5e-05" at extreme
+  -- zoom-out), and the digit class silently truncated the exponent — a ~100000x zoom error.
+  local leftTick, pxPerTick = chunk:match("CFGEDITVIEW%s+(%S+)%s+(%S+)")
   if not (leftTick and pxPerTick) then return nil, "no CFGEDITVIEW" end
   local lanes = parseVellanes(chunk)
   if #lanes == 0 then return nil, "no VELLANE" end
@@ -188,7 +211,21 @@ local function ccSetup(detected, lane)
   end
   leftTick, pxPerTick = tonumber(leftTick), tonumber(pxPerTick)
   if not (pxPerTick and pxPerTick ~= 0 and laneHeight > 0) then return nil, "bad view numbers" end
+  -- Editor timebase: CFGEDIT field 19. "0"/"4" (or no CFGEDIT line) = beats; anything else = time.
+  local timeMode = false
+  local cfgedit = ("\n" .. chunk):match("\nCFGEDIT%s+([^\r\n]+)")
+  if cfgedit then
+    local fields = {}
+    for w in cfgedit:gmatch("%S+") do fields[#fields + 1] = w end
+    local tb = fields[19]
+    timeMode = (tb ~= nil) and not (tb == "0" or tb == "4")
+  end
+  local leftTime
+  if timeMode and reaper.MIDI_GetProjTimeFromPPQPos then
+    leftTime = reaper.MIDI_GetProjTimeFromPPQPos(take, leftTick)  -- field 1 stays a TICK in time mode
+  end
   return { midiview = mv, leftTick = leftTick, pxPerTick = pxPerTick,
+           timeMode = timeMode, leftTime = leftTime,
            laneHeight = laneHeight, laneBottomOff = laneBottomOff }
 end
 
@@ -303,6 +340,8 @@ function M.start(ctx, detected)
         isCC = (detected.target == "cc"), take = detected.details.take,
         midiview = cc and cc.midiview, ccLeftTick = cc and cc.leftTick,
         ccPxPerTick = cc and cc.pxPerTick, ccLaneHeight = cc and cc.laneHeight,
+        -- Editor timebase time/synced: the zoom is px per SECOND and x maps linearly in project time.
+        ccTimeMode = cc and cc.timeMode or false, ccLeftTime = cc and cc.leftTime,
         ccLaneBottomOff = (cc and cc.laneBottomOff) or 0,  -- summed heights of the lanes BELOW the active one (0 = bottom/only lane)
         ccTopInset = 11, ccBottomInset = 1.5,  -- CC lane top-header / bottom-border px padding (values 127/0 sit inside the lane)
         -- Undo: CC needs UNDO_STATE_ITEMS(4) + a MarkTrackItemsDirty per edit (point changes aren't captured
@@ -527,9 +566,16 @@ function M.frame(ctx)
     local ispan = ivalBot - ivalTop
     if ispan <= 0 then return true end
     tvr = { l = ilx, t = it, r = irx, b = ib, w = irx - ilx, h = ib - it }
-    local pxPerTick = g.ccPxPerTick * xScale
-    X    = function(tt) return ilx + (reaper.MIDI_GetPPQPosFromProjTime(g.take, tt) - g.ccLeftTick) * pxPerTick end
-    xToT = function(x)  return reaper.MIDI_GetProjTimeFromPPQPos(g.take, g.ccLeftTick + (x - ilx) / pxPerTick) end
+    if g.ccTimeMode and g.ccLeftTime then
+      -- Timebase time/synced: CFGEDITVIEW's zoom is px per SECOND — x is linear in project time.
+      local pxPerSec = g.ccPxPerTick * xScale
+      X    = function(tt) return ilx + (tt - g.ccLeftTime) * pxPerSec end
+      xToT = function(x)  return g.ccLeftTime + (x - ilx) / pxPerSec end
+    else
+      local pxPerTick = g.ccPxPerTick * xScale
+      X    = function(tt) return ilx + (reaper.MIDI_GetPPQPosFromProjTime(g.take, tt) - g.ccLeftTick) * pxPerTick end
+      xToT = function(x)  return reaper.MIDI_GetProjTimeFromPPQPos(g.take, g.ccLeftTick + (x - ilx) / pxPerTick) end
+    end
     Y    = function(v)  return (g.vhi == g.vlo) and ivalBot or (ivalBot - (v - g.vlo) / (g.vhi - g.vlo) * ispan) end
     yToV = function(y)  return g.vlo + (ivalBot - y) / ispan * (g.vhi - g.vlo) end
   else
@@ -881,6 +927,7 @@ end
 -- the multi-lane geometry math is unit-testable headlessly (tests/test_cclane_stack.lua).
 M._parseVellanes = parseVellanes   -- (chunk) -> { {lane, h}, ... } top-to-bottom
 M._laneSlot      = laneSlot        -- (lanes, lane) -> height, bottomOffset | nil
+M._ccSetup       = ccSetup         -- (detected, lane) -> cc table | nil, err
 M._laneRect      = laneRect        -- (env, take?) -> { topOff, h } | nil  (arrange-relative)
 M._hudRectNow    = function() return g and g.hudRect end   -- live HUD rect (read-only; nil when idle)
 M._boundsNow     = function() return g and bounds(g.orig) end   -- baked-baseline bounds (read-only)

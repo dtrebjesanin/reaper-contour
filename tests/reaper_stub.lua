@@ -56,6 +56,7 @@ function M.reset()
     { ppq = 3.0 * M.PPQ, chan = 0, lane = M.CC_LANE, val = 90, shape = 1, tension = 0, sel = true },
   }
   M.DEFAULT_CHAN = 0   -- the editor's default insert channel (MIDIEditor_GetSetting_int "default_note_chan")
+  M.TAKE_NUM = 0       -- the active take's IP_TAKENUMBER (multi-take chunk-slicing tests override)
   -- The MIDI item chunk ccSetup parses. Default: ONE visible CC lane (the active one) + a CFGEDITVIEW
   -- (leftTick 0, pxPerTick 1.0). Multi-lane tests overwrite this with a stacked-VELLANE chunk.
   M.itemChunk = ("CFGEDITVIEW 0 1.0 0 0 0\nVELLANE %d 90 0\n"):format(M.CC_LANE)
@@ -156,6 +157,7 @@ end
 R.Envelope_GetParentTake = function(env) if env == "TENV" or env == "TENV0" then return "TAKE" end return nil end
 R.GetMediaItemTakeInfo_Value = function(take, key)
   if take == "TAKE" and key == "D_PLAYRATE" then return 2.0 end
+  if key == "IP_TAKENUMBER" then return M.TAKE_NUM or 0 end
   return 1.0
 end
 R.CountEnvelopePointsEx = function() return #M.aiPoints end
