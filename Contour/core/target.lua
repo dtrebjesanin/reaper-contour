@@ -512,14 +512,51 @@ end
 -- as SWS BR_Envelope::LaneMaxValue: 0 = -inf..+6dB (2), 1 = ..0dB (1), 4 = ..+12dB (4), 5 = ..+24dB (16).
 local VOL_RANGE_MAX = { [0] = 2, [1] = 1, [4] = 4, [5] = 16 }
 
+-- Locale-independent envelope classification. The state chunk's header token (<VOLENV2 / <PANENV /
+-- <PITCHENV / <PARMENV ...) is never translated, while GetEnvelopeName returns the LOCALIZED display
+-- name — matching that alone misclassified every built-in lane on langpack installs, and hijacked FX
+-- parameters whose names merely contain a keyword (ReaEQ's "Bandwidth" contains "width"). PARMENV
+-- headers also carry the FX parameter's real min/max, which beats needing SWS for the range.
+-- Returns kind ("pan"|"width"|"mute"|"pitch"|"volume"|"parm"|nil) plus PARMENV's min/max when present.
+local function envTypeFromChunk(env)
+  if not reaper.GetEnvelopeStateChunk then return nil end
+  local ok, chunk = reaper.GetEnvelopeStateChunk(env, "", false)
+  if not ok or type(chunk) ~= "string" then return nil end
+  local line = chunk:match("^%s*<([^\r\n]+)")
+  local token = line and line:match("^(%S+)")
+  if not token then return nil end
+  if token:find("PARMENV", 1, true) then
+    local a, b = line:match("^%S+%s+%S+%s+(%S+)%s+(%S+)")
+    return "parm", tonumber(a), tonumber(b)
+  end
+  if token:find("VOLENV",   1, true) then return "volume" end
+  if token:find("PANENV",   1, true) then return "pan" end
+  if token:find("WIDTHENV", 1, true) then return "width" end
+  if token:find("MUTEENV",  1, true) then return "mute" end
+  if token:find("PITCHENV", 1, true) then return "pitch" end
+  return nil
+end
+
 local function envValueRange(env)
   local mode = (reaper.GetEnvelopeScalingMode and reaper.GetEnvelopeScalingMode(env)) or 0
-  local _, name = reaper.GetEnvelopeName(env, "")
-  name = (name or ""):lower()
+  local kind, parmLo, parmHi = envTypeFromChunk(env)
+  if not kind then
+    -- Chunk unavailable (very old builds / stubs): classify by display name. English-only — the
+    -- chunk path above is what keeps localized installs and keyword-named FX params correct.
+    local _, name = reaper.GetEnvelopeName(env, "")
+    name = (name or ""):lower()
+    if name:find("pan") then kind = "pan"
+    elseif name:find("width") then kind = "width"
+    elseif name:find("mute") then kind = "mute"
+    elseif name:find("pitch") then kind = "pitch"
+    elseif name:find("volume") then kind = "volume"
+    end
+  end
   local lo, hi
-  if name:find("pan") or name:find("width") then lo, hi = -1, 1
-  elseif name:find("mute") then lo, hi = 0, 1
-  elseif name:find("pitch") then
+  if kind == "pan" or kind == "width" then lo, hi = -1, 1
+  elseif kind == "mute" then lo, hi = 0, 1
+  elseif kind == "parm" and parmLo and parmHi then lo, hi = parmLo, parmHi
+  elseif kind == "pitch" then
     -- The pitch DISPLAY range is the global "pitchenvrange" preference — semitones in the LOW byte
     -- (the snap setting lives in the higher bits). Storage is plain semitones. Hardcoding ±3 clamped
     -- a user's 24-semitone envelope; NOTE: SWS BR_EnvGetProperties is NOT a fix here — it reports the
@@ -528,7 +565,7 @@ local function envValueRange(env)
     r = r and (r & 0xFF) or 0
     if r < 1 then r = 3 end
     lo, hi = -r, r
-  elseif name:find("volume") then
+  elseif kind == "volume" then
     -- The volume lane ceiling is the global "volenvrange" preference (bit1 = fader scaling; the rest
     -- selects the range). Hardcoding 0..2 ceilinged +12/+24 dB lanes at +6.02 dB. The linear top is
     -- converted to the STORAGE domain below when the envelope is fader-scaled — skipping that put the
@@ -538,7 +575,8 @@ local function envValueRange(env)
     lo, hi = 0, top or 2
   end
   if lo then
-    if mode ~= 0 and reaper.ScaleToEnvelopeMode then          -- linear bounds -> storage domain
+    -- PARMENV bounds are already storage; built-in linear bounds convert when fader-scaled.
+    if kind ~= "parm" and mode ~= 0 and reaper.ScaleToEnvelopeMode then
       lo, hi = reaper.ScaleToEnvelopeMode(mode, lo), reaper.ScaleToEnvelopeMode(mode, hi)
     end
   elseif reaper.BR_EnvAlloc and reaper.BR_EnvGetProperties and reaper.BR_EnvFree then
