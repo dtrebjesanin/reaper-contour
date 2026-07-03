@@ -386,6 +386,33 @@ local function buildParams(g, spanT0, vmin, vmax)
   return params, ccShape
 end
 
+-- Run lfo.generate on the right AXIS for the rate mode. Musical rate generates in QUARTER NOTES:
+-- on the QN axis a cycle is an exact number of QN long BY CONSTRUCTION, so cycle boundaries follow
+-- tempo changes/ramps inside the selection instead of freezing the tempo sampled at the span start
+-- (one fixed cycleSec kept 120-BPM cycles running after a mid-selection drop to 60 — the "1/4"
+-- LFO pumped in eighths and drifted off the grid). Points come back in QN and convert to project
+-- seconds per point through the tempo map (monotonic, so point order is preserved). Hz/free rates
+-- keep the seconds axis: 2 Hz means 2 per second at any tempo. buildParams' seconds-based cycleSec
+-- stays for the panel PREVIEW (abstract 1-second window) and as the fallback without TimeMap2.
+local function generateSpan(g, st0, st1, params)
+  if g.rateMode == RATE_MUSICAL and reaper.TimeMap2_timeToQN and reaper.TimeMap2_QNToTime then
+    local qn0 = reaper.TimeMap2_timeToQN(0, st0)
+    local qn1 = reaper.TimeMap2_timeToQN(0, st1)
+    if qn0 and qn1 and qn1 > qn0 then
+      local L    = NOTE_VALUES[g.lengthIdx + 1] or 0.25
+      local mult = (FEELS[g.feelIdx + 1] or FEELS[1]).mult
+      local F    = FREQ_VALUES[g.freqIdx + 1] or 1
+      params.rate = { mode = "sync", cycleSec = lfo.musicalBeatsPerCycle(L, mult, F) }  -- QN units
+      local okGen, pts = pcall(lfo.generate, { t0 = qn0, t1 = qn1 }, params)
+      if okGen and pts then
+        for _, pt in ipairs(pts) do pt.time = reaper.TimeMap2_QNToTime(0, pt.time) end
+      end
+      return okGen, pts
+    end
+  end
+  return pcall(lfo.generate, { t0 = st0, t1 = st1 }, params)
+end
+
 -- Core generate+write. Returns (count|nil, errString|nil). `noUndo` true => the caller
 -- owns the undo block (live drag); false => self-contained single-undo write.
 local function generateAndWrite(state, detected, g, noUndo)
@@ -398,7 +425,7 @@ local function generateAndWrite(state, detected, g, noUndo)
   local st0, st1 = common.spanFor(tgt, detected, g)   -- time selection or entire item/envelope
   local params, ccShape = buildParams(g, st0, vmin, vmax)
 
-  local okGen, pts = pcall(lfo.generate, { t0 = st0, t1 = st1 }, params)
+  local okGen, pts = generateSpan(g, st0, st1, params)
   if not okGen then return nil, "Generate failed: " .. tostring(pts) end
   if not pts or #pts == 0 then return nil, "No points generated (empty selection?)" end
 
@@ -423,7 +450,7 @@ local function liveBulkWrite(tgt, snapshot, detected, g)
   local st0, st1 = common.spanFor(tgt, detected, g)   -- time selection or entire item/envelope
   local params, ccShape = buildParams(g, st0, vmin, vmax)
 
-  local okGen, pts = pcall(lfo.generate, { t0 = st0, t1 = st1 }, params)
+  local okGen, pts = generateSpan(g, st0, st1, params)
   if not okGen then return nil, "Generate failed: " .. tostring(pts) end
   if not pts or #pts == 0 then return nil, "No points generated (empty selection?)" end
 
