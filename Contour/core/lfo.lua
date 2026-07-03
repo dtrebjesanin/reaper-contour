@@ -609,6 +609,20 @@ function M.generate(span, params)
   -- Total cycle count over the selection (preserved by the freq-skew warp).
   local totalCycles = spanLen / cycleLen
 
+  -- HARD CEILING on the output size. Nothing else bounds cycles x points-per-cycle: extreme
+  -- Length/Frequency or Hz settings over a long span (Entire item on a long take) build hundreds of
+  -- thousands of points — per FRAME with Live on — and freeze REAPER with no feedback. Estimate the
+  -- emitter's yield and refuse with a clear error (the panels pcall generate and show it as status).
+  local MAX_PTS = 40000
+  local perCycle = 4                                   -- sparse emitters place <= 4 anchors per cycle
+  if p.shape == "custom" then
+    perCycle = max(4, ((p.customPoints and #p.customPoints) or 2) + 2)
+  end
+  if totalCycles * perCycle > MAX_PTS then
+    error(("Rate too dense for this span (~%dk points, max %dk) - lower the rate or shorten the span")
+      :format(floor(totalCycles * perCycle / 1000), MAX_PTS // 1000), 0)
+  end
+
   -- Random / Drift: dedicated sparse emitters (one random value per cycle). Selected up front so
   -- Steps/Smooth never reroute them (held random doesn't smooth/quantize meaningfully here).
   if p.shape == "random" then
@@ -703,6 +717,13 @@ function M.generate(span, params)
     sv = M.quantizeBipolar(sv, p.quantizeSteps)
     -- Tilt is a GLOBAL drift NOT scaled by fade depth (only the waveform sv*depth fades).
     return modelValue(baseV, amp, ampSkew, tiltOffset, rel, sv, p)
+  end
+
+  -- The generic sampler emits n+1 points (totalCycles x ppc, with ppc bumped for Steps/Smooth/custom):
+  -- cap it too — the sparse ceiling above under-counts when a modifier routes a shape here.
+  if n > MAX_PTS then
+    error(("Rate too dense for this span (~%dk points, max %dk) - lower the rate or shorten the span")
+      :format(floor(n / 1000), MAX_PTS // 1000), 0)
   end
 
   local pts = {}
