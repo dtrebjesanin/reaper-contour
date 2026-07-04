@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.2.4
+-- @version 1.2.5
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -25,27 +25,14 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.2.4
---   MIDI CC works on any MIDI channel: the tools follow the channel the lane's data actually lives
---   on (controllers/imports on channels other than 1 read as an empty lane before; Generate wrote a
---   second, inaudible stream). Empty lanes use the editor's insert channel.
---   Envelope types are identified from the envelope itself instead of its display name: localized
---   installs and FX parameters with names like "Bandwidth" got the wrong value range. FX-parameter
---   ranges no longer need SWS; SWS is now optional overall.
---   Transform on MIDI CC honors the editor timebase (Time (project) / Sync to project tempo),
---   reads the ACTIVE take of multi-take items, and parses extreme zoom levels.
---   Loop-extended MIDI items: edits clamp to the first loop pass (what the editor shows - it
---   repeats), instead of writing inaudible events past the source end. Generate/Reduce also clamp
---   CC time selections to the item bounds.
---   Musical-rate LFOs follow the tempo map: cycles stay on the beat through tempo changes and
---   ramps inside the selection (one fixed period was stamped from the selection start before).
---   Transform: Reverse (or a stretch dragged across its anchor) followed by Warp no longer
---   collapses the shape into a stack at the box edge.
---   A generated shape's last point no longer curves the segment leading into untouched material
---   after the time selection (step shapes still hold, as they should).
---   Absurd rate x span combinations refuse with "Rate too dense for this span" instead of
---   freezing REAPER (~40k point ceiling). Preset stores survive plugins flipping the numeric
---   locale.
+--   v1.2.5
+--   Transform panel: the mouse shortcuts (scroll = Curve, middle-click = Power/Sine, right-click =
+--   Symmetrical) now show what they changed on the panel's status line - including on the collapsed
+--   strip, where they used to work silently.
+--   Transform panel: a pin button (next to the collapse toggle, in both states) saves the panel's
+--   current position as its DEFAULT across sessions. Unpin to return the default to the selection
+--   box's top-right corner. Dragging without pinning stays session-only, and double-clicking empty
+--   panel space still sends it home (the pinned spot when one is saved).
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua
