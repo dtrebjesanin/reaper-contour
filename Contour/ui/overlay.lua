@@ -893,28 +893,29 @@ function M.frame(ctx)
         reaper.ImGui_DrawList_AddLine(bdl, bcx, bcy - 4, bcx, bcy + 4, 0xE3E8ECFF, 1.5)   -- plus upright
       end
     end
+    -- PIN toggle (save/unpin the position as the persistent default home), left of the collapse
+    -- button — in BOTH states: the panel can be dragged while collapsed, so it must be pinnable
+    -- there too. Glyph is DRAWN like the -/+ (map-pin dot + stem): filled = pinned, outline = not.
+    reaper.ImGui_SetCursorScreenPos(ctx, hudX + HUDW - PAD - 18 - 22, hudY + (g.hudCollapsed and 5 or PAD + 1))
+    if reaper.ImGui_Button(ctx, "##hud_pin", 18, 18) then hudPinToggle() end
+    if reaper.ImGui_SetItemTooltip then
+      reaper.ImGui_SetItemTooltip(ctx, g.hudHome and "Unpin: the default position returns to the box corner"
+                                                  or "Pin this position as the default")
+    end
+    if reaper.ImGui_GetItemRectMin and reaper.ImGui_DrawList_AddCircle
+       and reaper.ImGui_DrawList_AddCircleFilled and reaper.ImGui_DrawList_AddLine then
+      local px0, py0 = reaper.ImGui_GetItemRectMin(ctx)
+      local px1, py1 = reaper.ImGui_GetItemRectMax(ctx)
+      local pcx, pcy = (px0 + px1) / 2, (py0 + py1) / 2
+      local pdl = reaper.ImGui_GetWindowDrawList(ctx)
+      if g.hudHome then reaper.ImGui_DrawList_AddCircleFilled(pdl, pcx, pcy - 2, 3.5, 0xE3E8ECFF)
+      else              reaper.ImGui_DrawList_AddCircle(pdl, pcx, pcy - 2, 3.5, 0xE3E8ECFF, 0, 1.5) end
+      reaper.ImGui_DrawList_AddLine(pdl, pcx, pcy + 1, pcx, pcy + 6, 0xE3E8ECFF, 1.5)
+    end
     if g.hudCollapsed then
       reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hudY + 6)
       reaper.ImGui_Text(ctx, (g and g.status) or "Grab a handle to transform")
     else
-      -- PIN toggle (save/unpin the position as the persistent default home), left of the collapse
-      -- button. Glyph is DRAWN like the -/+ (map-pin dot + stem): filled = pinned, outline = not.
-      reaper.ImGui_SetCursorScreenPos(ctx, hudX + HUDW - PAD - 18 - 22, hudY + PAD + 1)
-      if reaper.ImGui_Button(ctx, "##hud_pin", 18, 18) then hudPinToggle() end
-      if reaper.ImGui_SetItemTooltip then
-        reaper.ImGui_SetItemTooltip(ctx, g.hudHome and "Unpin: the default position returns to the box corner"
-                                                    or "Pin this position as the default")
-      end
-      if reaper.ImGui_GetItemRectMin and reaper.ImGui_DrawList_AddCircle
-         and reaper.ImGui_DrawList_AddCircleFilled and reaper.ImGui_DrawList_AddLine then
-        local px0, py0 = reaper.ImGui_GetItemRectMin(ctx)
-        local px1, py1 = reaper.ImGui_GetItemRectMax(ctx)
-        local pcx, pcy = (px0 + px1) / 2, (py0 + py1) / 2
-        local pdl = reaper.ImGui_GetWindowDrawList(ctx)
-        if g.hudHome then reaper.ImGui_DrawList_AddCircleFilled(pdl, pcx, pcy - 2, 3.5, 0xE3E8ECFF)
-        else              reaper.ImGui_DrawList_AddCircle(pdl, pcx, pcy - 2, 3.5, 0xE3E8ECFF, 0, 1.5) end
-        reaper.ImGui_DrawList_AddLine(pdl, pcx, pcy + 1, pcx, pcy + 6, 0xE3E8ECFF, 1.5)
-      end
       local function rowY(i) reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hudY + PAD + i * RH) end
       reaper.ImGui_PushItemWidth(ctx, HUDW - 2 * PAD - 46)   -- row 0 leaves room for pin + toggle buttons
       rowY(0)
