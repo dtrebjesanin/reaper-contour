@@ -356,9 +356,12 @@ function M.start(ctx, detected)
         pristine = dcopy(region), pristineKeep = dcopy(keep), everMin = t0, everMax = t1 }
   g.knob = M.params.knob; g.shape = M.params.shape; g.symmetrical = M.params.symmetrical
   -- HUD starts collapsed if the user left it that way last time (toggled in the draw block; persisted).
-  -- The panel POSITION is deliberately NOT persisted: every launch starts at its default spot (off the
-  -- box's top-right corner); dragging parks it for this session only (g.hudUser dies with the tool).
+  -- The DRAGGED position stays session-only (g.hudUser dies with the tool) — but the PIN button can
+  -- save a persistent HOME (tr_hudhome, view-relative ints): launches start there when set, at the
+  -- classic spot off the box's top-right corner when not.
   g.hudCollapsed = reaper.GetExtState("Contour", "tr_hudcollapsed") == "1"
+  local hx, hy = (reaper.GetExtState("Contour", "tr_hudhome") or ""):match("^(%-?%d+),(%-?%d+)$")
+  if hx then g.hudHome = { x = tonumber(hx), y = tonumber(hy) } end
   -- Undo is per-DRAG (opened on grab, closed on release), not per session — so each stretch/tilt is its
   -- own clean undo point rather than the whole session collapsing into one coarse undo.
   return true
@@ -497,6 +500,24 @@ end
 
 -- HUD view margin (px): the panel never sits closer than this to the view edges.
 local HUD_M = 4
+
+-- Pin toggle: save the panel's CURRENT position as the persistent default home (view-relative
+-- INTEGERS — locale-proof), or unpin back to the classic box-corner home. Clearing g.hudUser on pin
+-- hands the spot over to the home path with no visual jump (the home IS this spot now).
+local function hudPinToggle()
+  if not (g and g.hudRect) then return end
+  if g.hudHome then
+    g.hudHome = nil
+    if reaper.DeleteExtState then reaper.DeleteExtState("Contour", "tr_hudhome", true)
+    else reaper.SetExtState("Contour", "tr_hudhome", "", true) end
+  else
+    local hx = math.floor(g.hudRect.x - (g.viewL or 0) + 0.5)
+    local hy = math.floor(g.hudRect.y - (g.viewT or 0) + 0.5)
+    g.hudHome = { x = hx, y = hy }
+    reaper.SetExtState("Contour", "tr_hudhome", hx .. "," .. hy, true)
+    g.hudUser = nil
+  end
+end
 
 function M.frame(ctx)
   if not g then return false end
@@ -653,6 +674,10 @@ function M.frame(ctx)
     -- session-parked position (view-relative + clamped) beats the default spot
     hudX = math.max(tvr.l + HUD_M, math.min(tvr.r - HUD_M - HUDW, tvr.l + g.hudUser.x))
     hudY = math.max(tvr.t + HUD_M, math.min(tvr.b - HUD_M - HUDH, tvr.t + g.hudUser.y))
+  elseif g.hudHome then
+    -- pinned persistent home (view-relative + clamped) beats the box-corner default
+    hudX = math.max(tvr.l + HUD_M, math.min(tvr.r - HUD_M - HUDW, tvr.l + g.hudHome.x))
+    hudY = math.max(tvr.t + HUD_M, math.min(tvr.b - HUD_M - HUDH, tvr.t + g.hudHome.y))
   else
     hudX = x1 + 14
     if hudX + HUDW > tvr.r - HUD_M then hudX = tvr.r - HUD_M - HUDW end
@@ -661,6 +686,7 @@ function M.frame(ctx)
     if hudY < tvr.t + HUD_M then hudY = tvr.t + HUD_M end
   end
   g.hudRect = { x = hudX, y = hudY, w = HUDW, h = HUDH }
+  g.viewL, g.viewT = tvr.l, tvr.t   -- view origin for the pin's view-relative save
 
   local handles = {
     { id="stretchL", x=x0, y=cy, op="stretch", arrow="h" }, { id="stretchR", x=x1, y=cy, op="stretch", arrow="h" },
@@ -791,18 +817,23 @@ function M.frame(ctx)
   end
 
   -- Live param gestures over the arrange (not while over the HUD or dragging a widget): wheel = Curve,
-  -- middle-click = Power/Sine, right-click = Symmetrical. The HUD reflects them since it reads M.params.
+  -- middle-click = Power/Sine, right-click = Symmetrical. The HUD reflects them since it reads M.params,
+  -- and each change ECHOES to the status line — the COLLAPSED strip shows only that line, so the
+  -- gestures give feedback there too instead of changing parameters silently.
   if not hudBusy then
     local wv = reaper.ImGui_GetMouseWheel(ctx)
     if wv and wv ~= 0 then
       local k = (M.params.knob or 0) + (wv > 0 and 5 or -5)
       M.params.knob = (k < -100) and -100 or (k > 100) and 100 or k
+      g.status = (M.params.knob == 0) and "Curve: linear" or ("Curve: %d"):format(M.params.knob)
     end
     if reaper.ImGui_IsMouseClicked(ctx, 2) then
       M.params.shape = (M.params.shape == "sine") and "power" or "sine"
+      g.status = (M.params.shape == "sine") and "Shape: Sine" or "Shape: Power"
     end
     if reaper.ImGui_IsMouseClicked(ctx, 1) then
       M.params.symmetrical = not M.params.symmetrical
+      g.status = M.params.symmetrical and "Symmetrical: on" or "Symmetrical: off"
     end
   end
 
@@ -866,8 +897,26 @@ function M.frame(ctx)
       reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hudY + 6)
       reaper.ImGui_Text(ctx, (g and g.status) or "Grab a handle to transform")
     else
+      -- PIN toggle (save/unpin the position as the persistent default home), left of the collapse
+      -- button. Glyph is DRAWN like the -/+ (map-pin dot + stem): filled = pinned, outline = not.
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + HUDW - PAD - 18 - 22, hudY + PAD + 1)
+      if reaper.ImGui_Button(ctx, "##hud_pin", 18, 18) then hudPinToggle() end
+      if reaper.ImGui_SetItemTooltip then
+        reaper.ImGui_SetItemTooltip(ctx, g.hudHome and "Unpin: the default position returns to the box corner"
+                                                    or "Pin this position as the default")
+      end
+      if reaper.ImGui_GetItemRectMin and reaper.ImGui_DrawList_AddCircle
+         and reaper.ImGui_DrawList_AddCircleFilled and reaper.ImGui_DrawList_AddLine then
+        local px0, py0 = reaper.ImGui_GetItemRectMin(ctx)
+        local px1, py1 = reaper.ImGui_GetItemRectMax(ctx)
+        local pcx, pcy = (px0 + px1) / 2, (py0 + py1) / 2
+        local pdl = reaper.ImGui_GetWindowDrawList(ctx)
+        if g.hudHome then reaper.ImGui_DrawList_AddCircleFilled(pdl, pcx, pcy - 2, 3.5, 0xE3E8ECFF)
+        else              reaper.ImGui_DrawList_AddCircle(pdl, pcx, pcy - 2, 3.5, 0xE3E8ECFF, 0, 1.5) end
+        reaper.ImGui_DrawList_AddLine(pdl, pcx, pcy + 1, pcx, pcy + 6, 0xE3E8ECFF, 1.5)
+      end
       local function rowY(i) reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hudY + PAD + i * RH) end
-      reaper.ImGui_PushItemWidth(ctx, HUDW - 2 * PAD - 24)   -- row 0 leaves room for the toggle button
+      reaper.ImGui_PushItemWidth(ctx, HUDW - 2 * PAD - 46)   -- row 0 leaves room for pin + toggle buttons
       rowY(0)
       _, p.knob = reaper.ImGui_SliderInt(ctx, "##hud_curve", p.knob, -100, 100,
         p.knob == 0 and "Curve: linear" or "Curve: %d")
@@ -938,6 +987,8 @@ M._laneSlot      = laneSlot        -- (lanes, lane) -> height, bottomOffset | ni
 M._ccSetup       = ccSetup         -- (detected, lane) -> cc table | nil, err
 M._laneRect      = laneRect        -- (env, take?) -> { topOff, h } | nil  (arrange-relative)
 M._hudRectNow    = function() return g and g.hudRect end   -- live HUD rect (read-only; nil when idle)
+M._hudPinToggle  = hudPinToggle                             -- pin/unpin the persistent HUD home
+M._statusNow     = function() return g and g.status end     -- live status line (read-only)
 M._boundsNow     = function() return g and bounds(g.orig) end   -- baked-baseline bounds (read-only)
 M._boxPxNow      = function() return g and g.boxPx end          -- on-screen box rect (read-only)
 

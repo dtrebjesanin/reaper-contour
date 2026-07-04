@@ -58,4 +58,63 @@ h.test("a stale tr_hudpos ExtState is ignored: every launch starts at the defaul
   overlay.finish()
 end)
 
+-- PINNED home (v1.3): the pin button saves the panel's current position as the PERSISTENT default
+-- (tr_hudhome, view-relative ints). Absent = the classic box-corner home. Distinct from the
+-- session-only drag (tr_hudpos stays ignored).
+h.test("a saved tr_hudhome becomes the launch position", function()
+  stub.reset()
+  stub.rec.extState["tr_hudhome"] = "500,300"
+  overlay.params = { knob = 0, shape = "power", symmetrical = false, flipMode = "absolute" }
+  local started, serr = overlay.start(CTX, detEnv())
+  h.truthy(started, "start: " .. tostring(serr))
+  overlay.frame(CTX)
+  local r = overlay._hudRectNow()
+  h.almost(r.x, 500, 1e-6, "pinned x"); h.almost(r.y, 300, 1e-6, "pinned y")
+  overlay.finish()
+end)
+
+h.test("pin toggle: unpin returns to the box corner; re-pin saves the current spot", function()
+  stub.reset()
+  stub.rec.extState["tr_hudhome"] = "500,300"
+  overlay.params = { knob = 0, shape = "power", symmetrical = false, flipMode = "absolute" }
+  local started, serr = overlay.start(CTX, detEnv())
+  h.truthy(started, "start: " .. tostring(serr))
+  overlay.frame(CTX)
+  overlay._hudPinToggle()                       -- unpin
+  h.truthy(stub.rec.extState["tr_hudhome"] == nil, "unpin clears the saved home")
+  overlay.frame(CTX)
+  local r = overlay._hudRectNow()
+  h.almost(r.x, 334, 1e-6, "back at the box-corner home")
+  overlay._hudPinToggle()                       -- pin the current spot
+  h.eq(stub.rec.extState["tr_hudhome"], "334,4", "re-pin saves view-relative ints")
+  overlay.finish()
+end)
+
+-- Gesture feedback: the wheel / middle-click / right-click shortcuts keep working while the HUD is
+-- collapsed, but gave NO feedback there. Each change now writes the status line (the collapsed strip
+-- shows exactly that), like the drag readouts do.
+h.test("mouse shortcuts echo to the status line (visible on the collapsed strip)", function()
+  stub.reset()
+  stub.rec.extState["tr_hudcollapsed"] = "1"
+  overlay.params = { knob = 0, shape = "power", symmetrical = false, flipMode = "absolute" }
+  local started, serr = overlay.start(CTX, detEnv())
+  h.truthy(started, "start: " .. tostring(serr))
+
+  reaper.ImGui_GetMouseWheel = function() return 1 end          -- one wheel notch up
+  overlay.frame(CTX)
+  reaper.ImGui_GetMouseWheel = function() return 0 end
+  h.eq(overlay._statusNow(), "Curve: 5", "wheel echoes the curve value")
+
+  reaper.ImGui_IsMouseClicked = function(_c, btn) return btn == 2 end   -- middle click
+  overlay.frame(CTX)
+  reaper.ImGui_IsMouseClicked = function() return false end
+  h.eq(overlay._statusNow(), "Shape: Sine", "middle-click echoes the shape")
+
+  reaper.ImGui_IsMouseClicked = function(_c, btn) return btn == 1 end   -- right click
+  overlay.frame(CTX)
+  reaper.ImGui_IsMouseClicked = function() return false end
+  h.eq(overlay._statusNow(), "Symmetrical: on", "right-click echoes the toggle")
+  overlay.finish()
+end)
+
 h.run()
