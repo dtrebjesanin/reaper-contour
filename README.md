@@ -1,8 +1,8 @@
 # Contour
 
-**A unified LFO / point-reduce / transform toolkit for REAPER — one panel for track envelopes, automation items, and MIDI CC.**
+**A unified LFO / point-reduce / transform toolkit for REAPER — one panel for track & take envelopes, automation items, and MIDI CC.**
 
-Contour replaces a pile of scattered modulation and shaping tools with a single [ReaImGui](https://github.com/cfillion/reaimgui) window built around three operations over three targets:
+Contour replaces a pile of scattered modulation and shaping tools with a single [ReaImGui](https://github.com/cfillion/reaimgui) window built around three operations over four targets:
 
 | Operation | What it does |
 |-----------|--------------|
@@ -10,7 +10,7 @@ Contour replaces a pile of scattered modulation and shaping tools with a single 
 | **Reduce** | Thin point density with an adjustable tolerance — live and non-destructive. |
 | **Transform** | A mouse overlay to **stretch / scale / compress / warp / tilt / reverse / flip** the selected points (or a time selection) directly under the cursor. |
 
-All three work on **track envelopes**, **automation items**, and **MIDI CC**.
+All three work on **track envelopes**, **take envelopes**, **automation items**, and **MIDI CC** (any visible CC lane, any MIDI channel).
 
 ## In action
 
@@ -24,19 +24,19 @@ All three work on **track envelopes**, **automation items**, and **MIDI CC**.
 
 ![Reduce](media/Reduce.gif)
 
-The same panel follows your context and works identically on automation items and MIDI CC.
+The same panel follows your context and works identically on take envelopes, automation items, and MIDI CC.
 
 ---
 
 ## Requirements
 
-REAPER 7+ with three extensions (all free, all installed via ReaPack):
+REAPER 7+ with two extensions (both free, both installed via ReaPack):
 
 | Extension | Needed for | Where |
 |-----------|-----------|-------|
 | **ReaImGui** | the panel UI (everything) | ReaTeam Extensions repo (bundled with ReaPack) |
 | **js_ReaScriptAPI** | the Transform overlay | ReaTeam Extensions repo |
-| **SWS** | the Transform overlay | <https://www.sws-extension.org> |
+| **SWS** *(optional)* | sharpens a few edge cases (looped-item lengths, exotic FX-parameter envelopes) | <https://www.sws-extension.org> |
 
 These are **not** bundled with Contour — see [Installing the dependencies](#installing-the-dependencies). If one is missing, Contour tells you which and how to get it.
 
@@ -59,7 +59,7 @@ Open **Extensions → ReaPack → Browse packages** and install:
 
 - **ReaImGui: ReaScript binding for Dear ImGui** — from the default *ReaTeam Extensions* repository.
 - **js_ReaScriptAPI: API functions for ReaScripts** — same repository.
-- **SWS/S&M Extension** — from <https://www.sws-extension.org> (a normal installer, not ReaPack).
+- **SWS/S&M Extension** *(optional)* — from <https://www.sws-extension.org> (a normal installer, not ReaPack). Most setups have it anyway; Contour runs fine without it.
 
 ---
 
@@ -80,8 +80,9 @@ After installing, search the **Actions** list (Actions → Show action list) for
 - **Reduce** — choose a scope (time selection / whole item / selected points) and drag the amount; the preview thins the points live. 0% restores the original.
 - **Transform** — make a selection (points or time), launch the overlay, and drag the on-shape handles:
   - **↔ Stretch** (horizontal), **↕ Scale / Compress** (vertical, via the Curve knob), **✕ Warp** (push a region in X and/or Y), **↻ Tilt**.
-  - **Mouse wheel** = Curve · **Middle-click** = Power/Sine · **Right-click** = Symmetrical.
+  - **Mouse wheel** = Curve · **Middle-click** = Power/Sine · **Right-click** = Symmetrical — each change echoes on the HUD's status line, so the shortcuts work with the panel collapsed too.
   - **Reverse / Flip / Reset** buttons in the overlay HUD. Each drag is one undo step.
+  - The HUD panel is **draggable**, **collapses** to a slim status strip, and the **pin button** saves its position as the default across sessions (unpin to return it to the box corner).
 
 ---
 
