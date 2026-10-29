@@ -16,7 +16,10 @@ permissions:
 
 jobs:
   reapack-index:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: on Ubuntu 26 (ubuntu-latest from 2026-10-19) `gem install reapack-index`
+    # fails building rugged — the image's OpenSSL 3.5 adds -l:libjitterentropy.a to the link line and the
+    # static library isn't on the runner. Verified 2026-10-29: rugged 1.9.4 and 1.9.6 both install on 24.04.
+    runs-on: ubuntu-24.04
     steps:
     - name: Fetch repository
       uses: actions/checkout@v4

@@ -16,7 +16,7 @@ on:
 
 jobs:
   reapack-index-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned for the rugged build — see the note in deploy.yml
     steps:
     - name: Fetch repository
       uses: actions/checkout@v4
