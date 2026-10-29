@@ -240,6 +240,38 @@ h.test("move: every value shifts by the same amount; times and other fields are 
   h.almost(pts[1].v, -0.5, 1e-9, "input not mutated")
 end)
 
+-- moveTime: the rigid time move behind Shift + the centre handle (left/right axis).
+h.test("moveTime: every time shifts by the same amount; values and other fields are kept", function()
+  local pts = { { t = 1, v = 0.3,  shape = 2, tension = 0.1, sel = true },
+                { t = 2, v = -0.4, shape = 0, tension = 0,   sel = false } }
+  local out, d = tr.moveTime(pts, 0.5)
+  h.almost(d, 0.5, 1e-9, "applied delta")
+  h.almost(out[1].t, 1.5, 1e-9); h.almost(out[2].t, 2.5, 1e-9)
+  h.eq(out[1].v, 0.3); h.eq(out[2].v, -0.4); h.eq(out[1].shape, 2); h.eq(out[2].sel, false)
+  h.almost(pts[1].t, 1, 1e-9, "input not mutated")
+end)
+
+h.test("moveTime: the group stops as a block at the bounds", function()
+  local pts = { P(1, 0), P(3, 0) }
+  local out, d = tr.moveTime(pts, 9, 0, 10)        -- 3+9 would pass the end at 10
+  h.almost(d, 7, 1e-9); h.almost(out[1].t, 8, 1e-9); h.almost(out[2].t, 10, 1e-9)
+  out, d = tr.moveTime(pts, -5, 0, 10)             -- 1-5 would pass the start at 0
+  h.almost(d, -1, 1e-9); h.almost(out[1].t, 0, 1e-9); h.almost(out[2].t, 2, 1e-9)
+end)
+
+h.test("moveTime: nil bounds are unbounded", function()
+  local out, d = tr.moveTime({ P(1, 0), P(3, 0) }, 100)
+  h.almost(d, 100, 1e-9); h.almost(out[2].t, 103, 1e-9)
+end)
+
+h.test("moveTime: points already past a bound are not pulled in, only kept from going further", function()
+  local pts = { P(-0.5, 0), P(2, 0) }              -- first point before the lower bound 0
+  local _, d = tr.moveTime(pts, -1, 0, nil)
+  h.almost(d, 0, 1e-9, "no further out")
+  _, d = tr.moveTime(pts, 1, 0, nil)
+  h.almost(d, 1, 1e-9, "moving back in is free")
+end)
+
 -- orderByTime: Lua's table.sort is not stable, so a plain sort by time reorders points that share a
 -- time — the two points of a vertical step — and the step flips on the next write.
 h.test("orderByTime: points at the same time keep their list order", function()

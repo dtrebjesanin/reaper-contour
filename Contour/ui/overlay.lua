@@ -1,8 +1,8 @@
 -- ui/overlay.lua — Transform mouse-overlay engine (Reaper-bound). A transparent, input-capturing ReaImGui
 -- window floats over the arrange (track envelopes / automation items) or the MIDI editor (CC); it draws the
 -- selection box + handles and performs LIVE drag transforms (Stretch / Tilt / Scale / Compress / Warp, and
--- Move = Shift + the centre handle) plus the Reverse / Flip / Reset one-shots, committing one undo point
--- per gesture.
+-- Move = Shift + the centre handle, up/down or left/right) plus the Reverse / Flip / Reset one-shots,
+-- committing one undo point per gesture.
 local M = {}
 local target = require("core.target")
 local ac     = require("core.arrangecoords")
@@ -426,6 +426,7 @@ end
 local HR_FULL, HR_SMALL = 10, 6
 local MINPX_FULL, MINPX_SMALL = 44, 28
 local function hit(mx, my, hx, hy, r) return math.abs(mx-hx) <= r and math.abs(my-hy) <= r end
+local MOVE_LOCK = 4  -- px of movement after a Shift-grab of the centre handle that picks the move's axis
 
 -- The target's REAL time boundaries: item bounds for automation items, take envelopes AND MIDI CC
 -- (the same rule juliansader's Multi Tool enforces — its mouse tick is clamped into the visible item
@@ -785,6 +786,8 @@ function M.frame(ctx)
         -- here, so a grab off the handle centre — or on a widened (MINPX) box's edge — never jumps.
         g.grabT = xToT(mx)
         g.grabV = yToV(my)
+        g.grabX, g.grabY = mx, my   -- screen px, for the Shift-move axis lock
+        g.moveAxis = nil
         g.lastSig = nil
         reaper.Undo_BeginBlock2(0); g.dragUndo = true  -- one undo point per drag
         break
@@ -829,15 +832,33 @@ function M.frame(ctx)
       local factor = (denom ~= 0) and ((mouseV - anchorV) / denom) or 1
       g.status = ((g.knob or 0) ~= 0 and "Compress %d%%" or "Scale %d%%"):format(math.floor(factor*100+0.5))
     elseif g.zone == "warp" and shiftHeld then
-      -- Shift + centre handle: a RIGID vertical move — every point by the same amount, times stay.
-      -- A point that reaches a lane rail stops there (writeTransformed's clamp); the others keep moving.
-      -- Releasing Shift mid-drag falls back to the warp below.
-      local dv = yToV(my) - g.grabV
-      local newPts = tr.move(g.orig, dv)
-      g.pending = newPts
-      writeTransformed(newPts)
-      local pct = (g.vhi ~= g.vlo) and (dv / (g.vhi - g.vlo) * 100) or 0
-      g.status = ("Move %+d%%"):format(math.floor(pct + 0.5))
+      -- Shift + centre handle: a RIGID move on ONE axis, locked by the first movement past MOVE_LOCK px
+      -- (mostly vertical = values, mostly horizontal = times) and kept for the whole drag, so an up/down
+      -- move can't nudge the times and the other way round. Releasing Shift falls back to the warp below.
+      if not g.moveAxis then
+        local dx, dy = math.abs(mx - g.grabX), math.abs(my - g.grabY)
+        if math.max(dx, dy) >= MOVE_LOCK then g.moveAxis = (dx > dy) and "time" or "value" end
+      end
+      if g.moveAxis == "value" then
+        -- every point by the same amount; a point that reaches a lane rail stops there (writeTransformed's
+        -- clamp) while the others keep moving
+        local dv = yToV(my) - g.grabV
+        local newPts = tr.move(g.orig, dv)
+        g.pending = newPts
+        writeTransformed(newPts)
+        local pct = (g.vhi ~= g.vlo) and (dv / (g.vhi - g.vlo) * 100) or 0
+        g.status = ("Move %+d%%"):format(math.floor(pct + 0.5))
+      elseif g.moveAxis == "time" then
+        -- every point by the same time; the whole group stops at the target's edges (item bounds /
+        -- project start), so no points pile up on an edge
+        local tlo, thi = targetTimeBounds()
+        local newPts, dt = tr.moveTime(g.orig, xToT(mx) - g.grabT, tlo, thi)
+        g.pending = newPts
+        writeTransformed(newPts)
+        g.status = ("Move %+d ms"):format(math.floor(dt * 1000 + 0.5))
+      else
+        g.status = "Move: up/down or left/right"
+      end
     elseif g.zone == "warp" then
       -- Free 2D warp: the peak (at the grab time) follows the cursor in BOTH time and value at once.
       local mouseT = xToT(mx)
@@ -1022,7 +1043,7 @@ function M.frame(ctx)
       reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy);      reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Mouse Scroll: Curve")
       reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 17); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Middle-click: Power/Sine")
       reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 34); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Right-click: Symmetrical")
-      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 51); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Shift + centre: move up/down")
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 51); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Shift + centre: move (one axis)")
       reaper.ImGui_PopItemWidth(ctx)
     end
     reaper.ImGui_End(ctx)   -- only after a Begin that returned true (ReaImGui's rule, as in contour.lua)

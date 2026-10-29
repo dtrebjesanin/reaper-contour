@@ -28,13 +28,13 @@ reaper.ImGui_GetKeyMods  = function() return Mods end
 
 local function defaults() return { knob = 0, shape = "power", symmetrical = false, flipMode = "absolute" } end
 
-local function launch(points, ext)
+local function launch(points, ext, det)
   stub.reset()
   if points then stub.envPoints = points end
   for k, v in pairs(ext or {}) do stub.rec.extState[k] = v end
   overlay.params = defaults()
   Mx, My, Down, Mods = 400, 300, false, 0
-  local ok, err = overlay.start(CTX, detEnv())
+  local ok, err = overlay.start(CTX, det or detEnv())
   h.truthy(ok, "start: " .. tostring(err))
 end
 
@@ -255,6 +255,73 @@ h.test("releasing Shift during the drag returns to the normal warp", function()
   h.almost(ins[1].v, -0.5, 1e-9, "warp pins the left edge")
   h.almost(ins[3].v, -0.2, 1e-9, "warp pins the right edge")
   h.truthy(ins[2].v > 0.6, "warp lifts the point under the cursor")
+  overlay.finish()
+end)
+
+---------------------------------------------------------------------------------------------------
+-- Shift + centre handle, axis lock: the first movement past 4 px picks the axis for the whole drag —
+-- mostly vertical = values, mostly horizontal = times.
+---------------------------------------------------------------------------------------------------
+h.test("Shift + centre: a mostly horizontal start moves every point in time; values stay", function()
+  launch()
+  Mods = SHIFT
+  Mx, My, Down = 160, 168, true; frame()
+  Mx, My = 200, 170; local ins = frame()   -- 40 px right (+0.5 s), 2 px down
+  Down = false; Mods = 0; frame()
+  h.eq(#ins, 3, "points written")
+  h.almost(ins[1].t, 0.5, 1e-9); h.almost(ins[1].v, -0.5, 1e-9)
+  h.almost(ins[2].t, 2.5, 1e-9); h.almost(ins[2].v, 0.6, 1e-9)
+  h.almost(ins[3].t, 4.5, 1e-9); h.almost(ins[3].v, -0.2, 1e-9)
+  h.eq(overlay._statusNow(), "Move +500 ms")
+  overlay.finish()
+end)
+
+h.test("Shift + centre: after a horizontal lock, vertical movement does not change the values", function()
+  launch()
+  Mods = SHIFT
+  Mx, My, Down = 160, 168, true; frame()
+  Mx, My = 200, 170; frame()               -- locks to time
+  My = 120; local ins = frame()            -- then far up
+  Down = false; Mods = 0; frame()
+  h.almost(ins[1].v, -0.5, 1e-9); h.almost(ins[2].v, 0.6, 1e-9); h.almost(ins[3].v, -0.2, 1e-9)
+  h.almost(ins[1].t, 0.5, 1e-9)
+  overlay.finish()
+end)
+
+h.test("Shift + centre: after a vertical lock, sideways movement does not change the times", function()
+  launch()
+  Mods = SHIFT
+  Mx, My, Down = 160, 168, true; frame()
+  Mx, My = 162, 160; frame()               -- 8 px up, 2 px right: locks to values
+  Mx = 240; local ins = frame()            -- then far right
+  Down = false; Mods = 0; frame()
+  h.almost(ins[1].t, 0, 1e-9); h.almost(ins[2].t, 2, 1e-9); h.almost(ins[3].t, 4, 1e-9)
+  h.almost(ins[2].v, 0.8, 1e-9, "the vertical move still follows the mouse")
+  overlay.finish()
+end)
+
+h.test("Shift + centre: under 4 px of movement nothing moves", function()
+  launch()
+  Mods = SHIFT
+  Mx, My, Down = 160, 168, true; frame()
+  Mx, My = 162, 166; frame()
+  Down = false; Mods = 0; frame()
+  local b = overlay._boundsNow()
+  h.almost(b.tmin, 0, 1e-9); h.almost(b.tmax, 4, 1e-9); h.almost(b.vmax, 0.6, 1e-9)
+  overlay.finish()
+end)
+
+h.test("Shift + centre: a time move stops as a block at the automation item's end", function()
+  -- AI fixture: points (1, 0.3) and (3, -0.3) in an item from 0 to 10 s. The box is widened to
+  -- y 148..192, so the centre handle sits at (160, 170).
+  launch(nil, nil, { target = "ai", label = "AI", hasTimeSel = true, t0 = 0, t1 = 4,
+                     details = { env = {}, aiIndex = 0 } })
+  Mods = SHIFT
+  Mx, My, Down = 160, 170, true; frame()
+  Mx = 800; frame()                        -- +8 s would put the last point at 11 s
+  Down = false; Mods = 0; frame()
+  local b = overlay._boundsNow()
+  h.almost(b.tmin, 8, 1e-9, "first point keeps its distance"); h.almost(b.tmax, 10, 1e-9, "last point at the end")
   overlay.finish()
 end)
 

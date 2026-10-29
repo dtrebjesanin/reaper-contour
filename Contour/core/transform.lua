@@ -141,12 +141,32 @@ function M.warp2d(points, tmin, tmax, cursorRelT, deltaT, deltaV, opts)
   return out
 end
 
--- Move every value by the same amount: v' = v + delta. Times stay. The rigid vertical move behind
--- Shift + the centre handle (the warp's tent falloff sculpts instead).
+-- Move every value by the same amount: v' = v + delta. Times stay. The rigid up/down move behind
+-- Shift + the centre handle (the warp's tent falloff sculpts instead); moveTime below is the left/right one.
 function M.move(points, delta)
   local out = {}
   for i = 1, #points do out[i] = copy(points[i], nil, points[i].v + delta) end
   return out
+end
+
+-- Move every time by the same amount: t' = t + delta, values stay. The group stops AS A BLOCK at the
+-- bounds lo/hi (nil = unbounded): delta is clamped so no point crosses them, instead of piling points
+-- up on an edge (which destroys the shape). Points already past a bound never force a jump — the clamp
+-- only blocks moving further out. Returns the moved points and the delta actually applied.
+function M.moveTime(points, delta, lo, hi)
+  local tmin, tmax
+  for i = 1, #points do
+    local t = points[i].t
+    if not tmin or t < tmin then tmin = t end
+    if not tmax or t > tmax then tmax = t end
+  end
+  if tmin then
+    if lo then local d = math.min(lo - tmin, 0); if delta < d then delta = d end end
+    if hi then local d = math.max(hi - tmax, 0); if delta > d then delta = d end end
+  end
+  local out = {}
+  for i = 1, #points do out[i] = copy(points[i], points[i].t + delta, nil) end
+  return out, delta
 end
 
 -- Order points by time, IN PLACE (returns the same table). Lua's table.sort is not stable: it reorders
