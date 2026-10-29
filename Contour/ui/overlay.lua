@@ -1,7 +1,8 @@
 -- ui/overlay.lua — Transform mouse-overlay engine (Reaper-bound). A transparent, input-capturing ReaImGui
 -- window floats over the arrange (track envelopes / automation items) or the MIDI editor (CC); it draws the
--- selection box + handles and performs LIVE drag transforms (Stretch / Tilt / Scale / Compress / Warp) plus
--- the Reverse / Flip / Reset one-shots, committing one undo point per gesture.
+-- selection box + handles and performs LIVE drag transforms (Stretch / Tilt / Scale / Compress / Warp, and
+-- Move = Shift + the centre handle) plus the Reverse / Flip / Reset one-shots, committing one undo point
+-- per gesture.
 local M = {}
 local target = require("core.target")
 local ac     = require("core.arrangecoords")
@@ -10,7 +11,21 @@ local common = require("ui.common")
 local theme  = require("ui.theme")
 -- Shaping params live HERE (the overlay is its own script instance — no cross-process sync needed). The
 -- HUD edits them; the drag branches read them via g.knob/g.shape/g.symmetrical each frame.
-M.params = { knob = 0, shape = "power", symmetrical = false, flipMode = "absolute" }
+M.params = { knob = 0, shape = "power", symmetrical = false, flipMode = "absolute", smallHandles = false }
+
+-- HUD settings saved between launches (ExtState Contour/<key>, persisted): { param, key, encode, decode }.
+-- Curve is deliberately NOT saved — a forgotten curve would silently change the next result. decode
+-- returns nil for an absent/unknown value, which leaves the default in place.
+local SAVED = {
+  { "symmetrical",  "tr_sym",      function(v) return v and "1" or "0" end,
+    function(s) if s == "1" then return true elseif s == "0" then return false end end },
+  { "shape",        "tr_shape",    tostring,
+    function(s) if s == "power" or s == "sine" then return s end end },
+  { "flipMode",     "tr_flipmode", tostring,
+    function(s) if s == "absolute" or s == "relative" then return s end end },
+  { "smallHandles", "tr_handles",  function(v) return v and "small" or "full" end,
+    function(s) if s == "small" then return true elseif s == "full" then return false end end },
+}
 
 local ACCENT   = 0x2E8B9BFF
 local ACCENT_H = 0x53C9D6FF
@@ -71,6 +86,24 @@ local function arrowCurved(dl, cx, cy, col, m)  -- curved double arrow (Tilt): t
 end
 
 local g = nil  -- gesture state table while armed
+
+-- Load the saved HUD settings over the defaults (launch), and save any that changed (every frame — the
+-- HUD widgets and the mouse gestures both edit M.params). g.saved holds the last saved encodings.
+local function loadSaved()
+  for _, s in ipairs(SAVED) do
+    local v = s[4](reaper.GetExtState("Contour", s[2]) or "")
+    if v ~= nil then M.params[s[1]] = v end
+  end
+end
+local function saveChanged()
+  for _, s in ipairs(SAVED) do
+    local enc = s[3](M.params[s[1]])
+    if enc ~= g.saved[s[2]] then
+      reaper.SetExtState("Contour", s[2], enc, true)
+      g.saved[s[2]] = enc
+    end
+  end
+end
 
 -- ReaImGui draws in a TOP-DOWN, DPI-scaled coordinate space on every platform, but REAPER's native APIs
 -- (JS_Window_*, track I_TCPSCREENY, GetSet_ArrangeView2) hand back OS-NATIVE screen coords: bottom-up on
@@ -354,6 +387,9 @@ function M.start(ctx, detected)
         -- Reset restores these: the region + outside points as captured at launch, plus the widest time
         -- extent ever written this session (so widening stretches/warps leave no stray points behind).
         pristine = dcopy(region), pristineKeep = dcopy(keep), everMin = t0, everMax = t1 }
+  loadSaved()
+  g.saved = {}
+  for _, s in ipairs(SAVED) do g.saved[s[2]] = s[3](M.params[s[1]]) end
   g.knob = M.params.knob; g.shape = M.params.shape; g.symmetrical = M.params.symmetrical
   -- HUD starts collapsed if the user left it that way last time (toggled in the draw block; persisted).
   -- The DRAGGED position stays session-only (g.hudUser dies with the tool) — but the PIN button can
@@ -385,8 +421,11 @@ local function mouseNow(ctx)
   return reaper.ImGui_IsMouseDown(ctx, 0), x, y
 end
 
-local HR = 10  -- handle hit radius (screen px)
-local function hit(mx, my, hx, hy) return math.abs(mx-hx) <= HR and math.abs(my-hy) <= HR end
+-- Handle grab radius (screen px, square test) and minimum on-screen box size, per handle style. The
+-- minimum box keeps neighbouring grab areas apart (MINPX/2 > 2*HR), so two handles never overlap.
+local HR_FULL, HR_SMALL = 10, 6
+local MINPX_FULL, MINPX_SMALL = 44, 28
+local function hit(mx, my, hx, hy, r) return math.abs(mx-hx) <= r and math.abs(my-hy) <= r end
 
 -- The target's REAL time boundaries: item bounds for automation items, take envelopes AND MIDI CC
 -- (the same rule juliansader's Multi Tool enforces — its mouse tick is clamped into the visible item
@@ -418,6 +457,9 @@ local function writeTransformed(newPts)
     if tlo and p.t < tlo then p.t = tlo end
     if thi and p.t > thi then p.t = thi end
   end
+  -- Time-ascending BEFORE the write (in place, so the baseline baked from this table matches): the
+  -- write order of same-time points decides a step's direction, and a mirrored list must swap them.
+  tr.orderByTime(newPts)
   local cMin, cMax
   for _, p in ipairs(newPts) do
     if not cMin or p.t < cMin then cMin = p.t end
@@ -453,9 +495,9 @@ end
 -- Baked baselines must be TIME-ASCENDING: transforms that reorder points (Reverse mirrors times in
 -- place; a Stretch dragged across its anchor negates the factor) otherwise hand warp2d a descending
 -- list, whose anti-fold guard then stacks the whole shape at the right edge on the next Warp drag.
+-- tr.orderByTime, not a plain table.sort: it keeps same-time points (vertical steps) in order.
 local function sortByTime(pts)
-  table.sort(pts, function(a, b) return a.t < b.t end)
-  return pts
+  return tr.orderByTime(pts)
 end
 
 -- CC edits only register in the undo history if the take's item is marked dirty before EndBlock2 (a flag-4
@@ -657,7 +699,9 @@ function M.frame(ctx)
   -- same spots and the last-drawn one (Warp) hides the Scale pair. Enforce a minimum ON-SCREEN box
   -- size around the centre. Geometry only, purely a grab affordance: the value/time mapping and the
   -- drag anchors still come from the real data bounds, so recovery drags behave normally.
-  local MINPX = 44
+  local small = M.params.smallHandles
+  local hr    = small and HR_SMALL or HR_FULL
+  local MINPX = small and MINPX_SMALL or MINPX_FULL
   if (yb - yt) < MINPX then local c = (yt + yb) / 2; yt, yb = c - MINPX / 2, c + MINPX / 2 end
   if (x1 - x0) < MINPX then local c = (x0 + x1) / 2; x0, x1 = c - MINPX / 2, c + MINPX / 2 end
   local cy = (yt+yb)/2
@@ -668,7 +712,7 @@ function M.frame(ctx)
   -- off the selection BOX's top-right corner (rides next to the shape), clamped into the view — so in
   -- a short editor / tall lane it can still land on the box. That's what DRAG (session-only) and the
   -- collapse strip are for (see the draw block). The rect is also what hudBusy protects.
-  local HUDW, HUDH = 250, g.hudCollapsed and 28 or 236
+  local HUDW, HUDH = 250, g.hudCollapsed and 28 or 253
   local hudX, hudY
   if g.hudUser then
     -- session-parked position (view-relative + clamped) beats the default spot
@@ -733,30 +777,39 @@ function M.frame(ctx)
   -- tool (the HUD widgets live in THIS same window and handle their own clicks).
   if down and not g.zone and not hudBusy then
     for _, hnd in ipairs(handles) do
-      if hit(mx, my, hnd.x, hnd.y) then
+      if hit(mx, my, hnd.x, hnd.y, hr) then
         g.zone = hnd.id
         g.box = b  -- snapshot box at grab
         g.wMin, g.wMax = b.tmin, b.tmax  -- seed the cleared range at the region's current extent
-        g.warpGrabT = xToT(mx)  -- warp anchors: cursor time/value at grab (the warp peak)
-        g.warpGrabV = yToV(my)
+        -- Cursor time/value at grab (also the warp peak). Every drag follows the mouse MOVEMENT from
+        -- here, so a grab off the handle centre — or on a widened (MINPX) box's edge — never jumps.
+        g.grabT = xToT(mx)
+        g.grabV = yToV(my)
+        g.lastSig = nil
         reaper.Undo_BeginBlock2(0); g.dragUndo = true  -- one undo point per drag
         break
       end
     end
     -- click outside any handle AND outside the box => commit + end
-    if not g.zone and (mx < x0-HR or mx > x1+HR or my < yt-HR or my > yb+HR) then
+    if not g.zone and (mx < x0-hr or mx > x1+hr or my < yt-hr or my > yb+hr) then
       return false
     end
   end
 
-  -- during drag: compute params and write
-  if g.zone and down then
+  -- during drag: compute params and write. Skipped while nothing changed — the same mouse position,
+  -- settings and Shift state give the same result, and each write deletes and re-inserts every point.
+  local shiftHeld = reaper.ImGui_GetKeyMods and reaper.ImGui_Mod_Shift
+                    and ((reaper.ImGui_GetKeyMods(ctx) or 0) & reaper.ImGui_Mod_Shift()) ~= 0
+  local sig = g.zone and ("%s %.2f %.2f %s %s %s %s"):format(g.zone, mx, my, tostring(g.knob),
+    tostring(g.shape), tostring(g.symmetrical), tostring(shiftHeld))
+  if g.zone and down and sig ~= g.lastSig then
+    g.lastSig = sig
     if g.zone == "stretchL" or g.zone == "stretchR" then
       local edgeT   = (g.zone == "stretchL") and g.box.tmin or g.box.tmax
       local anchorT
       if g.symmetrical then anchorT = (g.box.tmin + g.box.tmax) / 2
       else anchorT = (g.zone == "stretchL") and g.box.tmax or g.box.tmin end
-      local mouseT  = xToT(mx)
+      local mouseT  = edgeT + (xToT(mx) - g.grabT)   -- the edge follows the movement since the grab
       local denom   = (edgeT - anchorT)
       local factor  = (denom ~= 0) and ((mouseT - anchorT) / denom) or 1
       local newPts = tr.stretch(g.orig, anchorT, factor)
@@ -768,29 +821,37 @@ function M.frame(ctx)
       local anchorV
       if g.symmetrical then anchorV = (g.box.vmin + g.box.vmax) / 2
       else anchorV = (g.zone == "scaleT") and g.box.vmin or g.box.vmax end
-      local mouseV = yToV(my)
+      local mouseV = boundaryV + (yToV(my) - g.grabV)   -- the edge follows the movement since the grab
       local newPts = tr.vscale(g.orig, anchorV, boundaryV, mouseV, { knob = g.knob or 0, shape = g.shape or "power" })
       g.pending = newPts
       writeTransformed(newPts)
       local denom  = (boundaryV - anchorV)
       local factor = (denom ~= 0) and ((mouseV - anchorV) / denom) or 1
       g.status = ((g.knob or 0) ~= 0 and "Compress %d%%" or "Scale %d%%"):format(math.floor(factor*100+0.5))
+    elseif g.zone == "warp" and shiftHeld then
+      -- Shift + centre handle: a RIGID vertical move — every point by the same amount, times stay.
+      -- A point that reaches a lane rail stops there (writeTransformed's clamp); the others keep moving.
+      -- Releasing Shift mid-drag falls back to the warp below.
+      local dv = yToV(my) - g.grabV
+      local newPts = tr.move(g.orig, dv)
+      g.pending = newPts
+      writeTransformed(newPts)
+      local pct = (g.vhi ~= g.vlo) and (dv / (g.vhi - g.vlo) * 100) or 0
+      g.status = ("Move %+d%%"):format(math.floor(pct + 0.5))
     elseif g.zone == "warp" then
       -- Free 2D warp: the peak (at the grab time) follows the cursor in BOTH time and value at once.
       local mouseT = xToT(mx)
       local mouseV = yToV(my)
       local span = g.box.tmax - g.box.tmin
-      local cursorRelT = (span > 0) and ((g.warpGrabT - g.box.tmin) / span) or 0.5
+      local cursorRelT = (span > 0) and ((g.grabT - g.box.tmin) / span) or 0.5
       local newPts = tr.warp2d(g.orig, g.box.tmin, g.box.tmax, cursorRelT,
-        mouseT - g.warpGrabT, mouseV - g.warpGrabV, { knob = g.knob or 0, shape = g.shape or "power" })
+        mouseT - g.grabT, mouseV - g.grabV, { knob = g.knob or 0, shape = g.shape or "power" })
       g.pending = newPts
       writeTransformed(newPts)
       g.status = "Warp X+Y"
     else -- tilt
       local side = (g.zone == "tiltL") and "left" or "right"
-      local mouseV = yToV(my)
-      local endV   = g.box.vmax  -- both tilt handles sit at the top of the bounding box
-      local delta  = mouseV - endV
+      local delta  = yToV(my) - g.grabV   -- the lifted end follows the movement since the grab
       local newPts = tr.tilt(g.orig, g.box.tmin, g.box.tmax, delta,
         { knob = g.knob or 0, shape = g.shape or "power", side = side, symmetrical = g.symmetrical or false })
       g.pending = newPts
@@ -805,7 +866,7 @@ function M.frame(ctx)
   -- point, and keep the tool open for another grab.
   if g.zone and not down then
     -- pending was boundary-clamped inside writeTransformed, so baking it keeps baseline == written data
-    g.orig = sortByTime(g.pending or g.orig); g.pending = nil; g.zone = nil
+    g.orig = sortByTime(g.pending or g.orig); g.pending = nil; g.zone = nil; g.lastSig = nil
     if g.dragUndo then
       markEditDirty()  -- CC: register the edit before closing (flag-4 entry is empty without it)
       reaper.Undo_EndBlock2(0, g.undoLabel, g.undoFlag); g.dragUndo = false
@@ -858,12 +919,18 @@ function M.frame(ctx)
     for _, hnd in ipairs(handles) do
       local c = OPCOL[hnd.op] or { ACCENT, ACCENT_H }
       local col = (g.zone == hnd.id) and c[2] or c[1]
-      reaper.ImGui_DrawList_AddCircleFilled(dl, hnd.x, hnd.y, 11.55, 0x0A1A1FE6)  -- dark disc for contrast
-      reaper.ImGui_DrawList_AddCircle(dl, hnd.x, hnd.y, 11.55, col, 0, 0.95)       -- op-coloured ring
-      if     hnd.arrow == "h" then arrowH(dl, hnd.x, hnd.y, col)
-      elseif hnd.arrow == "v" then arrowV(dl, hnd.x, hnd.y, col)
-      elseif hnd.arrow == "c" then arrowCurved(dl, hnd.x, hnd.y, col, hnd.dir)
-      else arrow4(dl, hnd.x, hnd.y, col) end
+      if small then
+        -- Small handles: an op-coloured dot with a dark rim, about a third of the full disc, no arrow
+        reaper.ImGui_DrawList_AddCircleFilled(dl, hnd.x, hnd.y, 4.5, 0x0A1A1FE6)
+        reaper.ImGui_DrawList_AddCircleFilled(dl, hnd.x, hnd.y, 3.5, col)
+      else
+        reaper.ImGui_DrawList_AddCircleFilled(dl, hnd.x, hnd.y, 11.55, 0x0A1A1FE6)  -- dark disc for contrast
+        reaper.ImGui_DrawList_AddCircle(dl, hnd.x, hnd.y, 11.55, col, 0, 0.95)       -- op-coloured ring
+        if     hnd.arrow == "h" then arrowH(dl, hnd.x, hnd.y, col)
+        elseif hnd.arrow == "v" then arrowV(dl, hnd.x, hnd.y, col)
+        elseif hnd.arrow == "c" then arrowCurved(dl, hnd.x, hnd.y, col, hnd.dir)
+        else arrow4(dl, hnd.x, hnd.y, col) end
+      end
     end
     -- HUD panel background (drawn before the widgets, which append to the same draw list on top)
     reaper.ImGui_DrawList_AddRectFilled(dl, hudX, hudY, hudX+HUDW, hudY+HUDH, 0x12242BF7, 6)
@@ -933,6 +1000,10 @@ function M.frame(ctx)
       rowY(2)
       local cSym, sym = reaper.ImGui_Checkbox(ctx, "Symmetrical##hud_sym", p.symmetrical)
       if cSym then p.symmetrical = sym end
+      -- Small handles: dots instead of the arrow discs, for small selections. Fixed x, same row.
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD + 108, hudY + PAD + 2 * RH)
+      local cSm, sm = reaper.ImGui_Checkbox(ctx, "Small handles##hud_small", p.smallHandles or false)
+      if cSm then p.smallHandles = sm end
       rowY(3)
       reaper.ImGui_Text(ctx, (g and g.status) or "Grab a handle to transform")
       rowY(4)
@@ -951,11 +1022,13 @@ function M.frame(ctx)
       reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy);      reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Mouse Scroll: Curve")
       reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 17); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Middle-click: Power/Sine")
       reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 34); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Right-click: Symmetrical")
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 51); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Shift + centre: move up/down")
       reaper.ImGui_PopItemWidth(ctx)
     end
+    reaper.ImGui_End(ctx)   -- only after a Begin that returned true (ReaImGui's rule, as in contour.lua)
   end
-  reaper.ImGui_End(ctx)
   theme.pop(ctx)
+  saveChanged()
   return true
 end
 

@@ -80,8 +80,11 @@ After installing, search the **Actions** list (Actions → Show action list) for
 - **Reduce** — choose a scope (time selection / whole item / selected points) and drag the amount; the preview thins the points live. 0% restores the original.
 - **Transform** — make a selection (points or time), launch the overlay, and drag the on-shape handles:
   - **↔ Stretch** (horizontal), **↕ Scale / Compress** (vertical, via the Curve knob), **✕ Warp** (push a region in X and/or Y), **↻ Tilt**.
+  - **Shift + ✕ centre handle** moves every point up or down by the same amount, times unchanged (release Shift mid-drag to go back to Warp).
   - **Mouse wheel** = Curve · **Middle-click** = Power/Sine · **Right-click** = Symmetrical — each change echoes on the HUD's status line, so the shortcuts work with the panel collapsed too.
   - **Reverse / Flip / Reset** buttons in the overlay HUD. Each drag is one undo step.
+  - **Small handles** (HUD checkbox) draws the handles as small coloured dots, for short selections.
+  - Symmetrical, Power/Sine, the Flip mode and Small handles are **remembered between launches**; Curve always starts linear.
   - The HUD panel is **draggable**, **collapses** to a slim status strip, and the **pin button** saves its position as the default across sessions (unpin to return it to the box corner).
 
 ---

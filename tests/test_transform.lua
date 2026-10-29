@@ -229,4 +229,37 @@ h.test("warp: zero time span (tmin==tmax) returns finite, unchanged values", fun
   end
 end)
 
+-- move: the rigid vertical move behind Shift + the centre handle.
+h.test("move: every value shifts by the same amount; times and other fields are kept", function()
+  local pts = { { t = 0, v = -0.5, shape = 2, tension = 0.3, sel = true },
+                { t = 1, v = 0.2,  shape = 0, tension = 0,   sel = false } }
+  local out = tr.move(pts, 0.25)
+  h.almost(out[1].v, -0.25, 1e-9); h.almost(out[2].v, 0.45, 1e-9)
+  h.eq(out[1].t, 0); h.eq(out[2].t, 1)
+  h.eq(out[1].shape, 2); h.eq(out[1].tension, 0.3); h.eq(out[2].sel, false)
+  h.almost(pts[1].v, -0.5, 1e-9, "input not mutated")
+end)
+
+-- orderByTime: Lua's table.sort is not stable, so a plain sort by time reorders points that share a
+-- time — the two points of a vertical step — and the step flips on the next write.
+h.test("orderByTime: points at the same time keep their list order", function()
+  local pts = {}
+  for i = 1, 40 do pts[i] = { t = (i + 1) // 2, v = i } end   -- 20 steps: t = 1,1,2,2,...,20,20
+  local out = tr.orderByTime(pts)
+  h.truthy(out == pts, "orders in place and returns the same table")
+  for i = 1, 40 do h.eq(out[i].v, i, "position " .. i) end
+end)
+
+h.test("orderByTime: a mirrored list comes back ascending with each step's pair swapped", function()
+  -- Reverse (or a Stretch dragged past its anchor) mirrors time: the list arrives time-DESCENDING, and
+  -- the step at t=2 (v=2 then v=3) must come out the other way round: v=3 then v=2.
+  local out = tr.orderByTime({ { t = 3, v = 1 }, { t = 2, v = 2 }, { t = 2, v = 3 }, { t = 1, v = 4 } })
+  h.eq(out[1].v, 4); h.eq(out[2].v, 3); h.eq(out[3].v, 2); h.eq(out[4].v, 1)
+end)
+
+h.test("orderByTime: an out-of-order point in an ascending list is moved into place", function()
+  local out = tr.orderByTime({ { t = 1, v = 1 }, { t = 3, v = 3 }, { t = 2, v = 2 }, { t = 4, v = 4 } })
+  for i = 1, 4 do h.eq(out[i].v, i, "position " .. i) end
+end)
+
 h.run()

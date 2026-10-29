@@ -141,6 +141,32 @@ function M.warp2d(points, tmin, tmax, cursorRelT, deltaT, deltaV, opts)
   return out
 end
 
+-- Move every value by the same amount: v' = v + delta. Times stay. The rigid vertical move behind
+-- Shift + the centre handle (the warp's tent falloff sculpts instead).
+function M.move(points, delta)
+  local out = {}
+  for i = 1, #points do out[i] = copy(points[i], nil, points[i].v + delta) end
+  return out
+end
+
+-- Order points by time, IN PLACE (returns the same table). Lua's table.sort is not stable: it reorders
+-- points that share a time — the two points of a vertical step — and the step flips on the next write.
+-- Ties keep their list order. A MIRRORED list (Reverse, or a Stretch dragged past its anchor: the first
+-- time later than the last) is reversed first, so each step's pair swaps sides as the mirror requires.
+function M.orderByTime(points)
+  local n = #points
+  if n > 1 and points[1].t > points[n].t then
+    for i = 1, n // 2 do points[i], points[n - i + 1] = points[n - i + 1], points[i] end
+  end
+  local pos = {}
+  for i = 1, n do pos[points[i]] = i end
+  table.sort(points, function(a, b)
+    if a.t ~= b.t then return a.t < b.t end
+    return pos[a] < pos[b]
+  end)
+  return points
+end
+
 -- Mirror positions in time about the box: t' = tmin+tmax-t. One-shot.
 function M.reverse(points, tmin, tmax)
   local out = {}

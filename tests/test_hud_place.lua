@@ -1,7 +1,7 @@
 -- tests/test_hud_place.lua — Transform HUD placement + collapse + drag persistence. The HUD's home is
 -- the VIEW's top-right corner (fixed, predictable); a user-dragged (parked) position beats it and is
 -- stored view-relative + clamped; double-click empty panel space returns to the corner. Collapsed =
--- a slim status strip, persisted. (Stub view: trackview client rect 0,0..800,600; HUD 250x236/28.)
+-- a slim status strip, persisted. (Stub view: trackview client rect 0,0..800,600; HUD 250x253/28.)
 package.path = package.path .. ";./Contour/?.lua;./?.lua;./tests/?.lua"
 
 local stub = require("reaper_stub")
@@ -17,7 +17,7 @@ end
 
 -- Default home = the ORIGINAL placement: off the selection BOX's top-right corner, clamped into the
 -- view. Under the stub the box is x0=0..x1=320 (times 0..4 over a 0..10s view, 800px wide) with
--- yt=146, so: x = 320+14 = 334; y = 146-236-16 = -106 -> clamped to the view top margin (4).
+-- yt=146, so: x = 320+14 = 334; y = 146-253-16 = -123 -> clamped to the view top margin (4).
 h.test("default home: off the box's top-right corner (original placement)", function()
   stub.reset()
   overlay.params = { knob = 0, shape = "power", symmetrical = false, flipMode = "absolute" }
