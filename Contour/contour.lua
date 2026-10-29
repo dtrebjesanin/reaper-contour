@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.2.5
+-- @version 1.2.6
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -25,14 +25,18 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.2.5
---   Transform panel: the mouse shortcuts (scroll = Curve, middle-click = Power/Sine, right-click =
---   Symmetrical) now show what they changed on the panel's status line - including on the collapsed
---   strip, where they used to work silently.
---   Transform panel: a pin button (next to the collapse toggle, in both states) saves the panel's
---   current position as its DEFAULT across sessions. Unpin to return the default to the selection
---   box's top-right corner. Dragging without pinning stays session-only, and double-clicking empty
---   panel space still sends it home (the pinned spot when one is saved).
+--   v1.2.6
+--   Transform: Symmetrical, Power/Sine, the Flip mode and Small handles are remembered between
+--   launches. Curve still starts linear every time.
+--   Transform: Shift + the centre handle moves the points as a block on ONE axis, picked by the
+--   direction you start in - up/down moves the values (points stop at the lane edge), left/right
+--   moves the times (the whole group stops at the item edge). Release Shift mid-drag to warp again.
+--   Transform: a "Small handles" option in the panel draws the handles as small coloured dots, for
+--   short selections.
+--   Transform: grabbing a handle off its centre no longer makes the points jump.
+--   Transform: vertical steps (two points at the same time) keep their direction through repeated
+--   drags, and Reverse mirrors them correctly.
+--   Transform: holding a handle still no longer rewrites the points on every frame.
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua
