@@ -9,35 +9,46 @@ name: check
 #     reduce/drawpad panel logic. The in-REAPER self-test (tests/reaper/) is NOT run here — it needs
 #     a live REAPER and is run manually from the Action list.
 # Separate from deploy.yml: this never regenerates or pushes index.xml, so it can't trigger a publish.
+# Read-only token, actions pinned to commit SHAs, gems installed frozen from .github/reapack/Gemfile.lock
+# (see deploy.yml for why). Which files count as packages is set in .reapack-index.conf.
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   reapack-index-check:
     runs-on: ubuntu-24.04   # pinned for the rugged build — see the note in deploy.yml
+    env:
+      BUNDLE_GEMFILE: ${{ github.workspace }}/.github/reapack/Gemfile
+      BUNDLE_FROZEN: 'true'
     steps:
     - name: Fetch repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
+        persist-credentials: false
     - name: Install Pandoc
       run:  sudo apt-get update && sudo apt-get install -yy pandoc
     - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
+      uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
       with:
-        ruby-version: '3.2'
-    - name: Install reapack-index
-      run:  gem install reapack-index
+        ruby-version: '3.4'
+    - name: Install reapack-index (locked versions)
+      run:  bundle install
     - name: Validate metadata headers
-      run:  reapack-index --check
+      run:  bundle exec reapack-index --check
 
   lua-tests:
     runs-on: ubuntu-latest
     steps:
     - name: Fetch repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
     - name: Install Lua 5.4
       run:  sudo apt-get update && sudo apt-get install -yy lua5.4
     # The test files set package.path relative to the repo root (./Contour, ./tests), which is the

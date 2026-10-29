@@ -6,6 +6,14 @@ name: deploy
 #
 # Requires: Settings > Actions > General > Workflow permissions = "Read and write permissions"
 # (or the permissions block below) so the bot can push index.xml.
+#
+# Hardening (2026-10-29) — this job holds a write token, and whatever lands on master reaches every
+# ReaPack user:
+#   * Gems install FROZEN from .github/reapack/Gemfile.lock (exact versions + checksums), so a new or
+#     tampered release of any dependency can't run here. Update it deliberately (see the Gemfile).
+#   * Actions are pinned to full commit SHAs (a moved tag can't swap the code); the comment names the release.
+#   * The token never sits on disk (persist-credentials: false) while gem code builds and runs; only the
+#     final push step gets it, via its env, with git hooks disabled.
 
 on:
   push:
@@ -20,11 +28,15 @@ jobs:
     # fails building rugged — the image's OpenSSL 3.5 adds -l:libjitterentropy.a to the link line and the
     # static library isn't on the runner. Verified 2026-10-29: rugged 1.9.4 and 1.9.6 both install on 24.04.
     runs-on: ubuntu-24.04
+    env:
+      BUNDLE_GEMFILE: ${{ github.workspace }}/.github/reapack/Gemfile
+      BUNDLE_FROZEN: 'true'
     steps:
     - name: Fetch repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0   # reapack-index walks full history to build the version list
+        persist-credentials: false
     - name: Configure git
       run: |-
         git config user.name  'Contour Bot'
@@ -32,12 +44,14 @@ jobs:
     - name: Install Pandoc
       run:  sudo apt-get update && sudo apt-get install -yy pandoc
     - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
+      uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
       with:
-        ruby-version: '3.2'
-    - name: Install reapack-index
-      run:  gem install reapack-index
+        ruby-version: '3.4'
+    - name: Install reapack-index (locked versions)
+      run:  bundle install
     - name: Update index.xml
-      run:  reapack-index --commit --name 'Contour'
+      run:  bundle exec reapack-index --commit --name 'Contour'
     - name: Push changes
-      run:  git push
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run:  git -c core.hooksPath=/dev/null push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:master

@@ -1,0 +1,76 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    addressable (2.9.0)
+      public_suffix (>= 2.0.2, < 8.0)
+    colorize (0.8.1)
+    gitable (0.4.0)
+      addressable (~> 2.2, >= 2.2.7)
+    metaheader (2.0.1)
+    nokogiri (1.19.4-aarch64-linux-gnu)
+      racc (~> 1.4)
+    nokogiri (1.19.4-aarch64-linux-musl)
+      racc (~> 1.4)
+    nokogiri (1.19.4-arm-linux-gnu)
+      racc (~> 1.4)
+    nokogiri (1.19.4-arm-linux-musl)
+      racc (~> 1.4)
+    nokogiri (1.19.4-arm64-darwin)
+      racc (~> 1.4)
+    nokogiri (1.19.4-x86_64-darwin)
+      racc (~> 1.4)
+    nokogiri (1.19.4-x86_64-linux-gnu)
+      racc (~> 1.4)
+    nokogiri (1.19.4-x86_64-linux-musl)
+      racc (~> 1.4)
+    pandoc-ruby (2.1.4)
+    public_suffix (7.0.5)
+    racc (1.8.1)
+    reapack-index (1.2.6)
+      addressable (~> 2.4)
+      colorize (~> 0.7)
+      gitable (~> 0.3)
+      metaheader (~> 2.0)
+      nokogiri (~> 1.7)
+      pandoc-ruby (= 2.1.4)
+      rugged (~> 1.0)
+      stable_sort (~> 1.1)
+    rugged (1.9.6)
+    stable_sort (1.1.0)
+
+PLATFORMS
+  aarch64-linux-gnu
+  aarch64-linux-musl
+  arm-linux-gnu
+  arm-linux-musl
+  arm64-darwin
+  x86_64-darwin
+  x86_64-linux
+  x86_64-linux-gnu
+  x86_64-linux-musl
+
+DEPENDENCIES
+  reapack-index (= 1.2.6)
+
+CHECKSUMS
+  addressable (2.9.0) sha256=7fdf6ac3660f7f4e867a0838be3f6cf722ace541dd97767fa42bc6cfa980c7af
+  colorize (0.8.1) sha256=0ba0c2a58232f9b706dc30621ea6aa6468eeea120eb6f1ccc400105b90c4798c
+  gitable (0.4.0) sha256=69d42acf2e6c75ab417d0652dc1475bebc725daff70e369f417d94dfc5503743
+  metaheader (2.0.1) sha256=1d0dfbc1370e5b261772b9e1404d3352340692b751f6d86e704fb15723a40451
+  nokogiri (1.19.4-aarch64-linux-gnu) sha256=1269fb644a6de405057a53dd5c762b1209b43ca7424f839454d3dbc677c31a8f
+  nokogiri (1.19.4-aarch64-linux-musl) sha256=35c65b9ce72b3bb03207bdbe7067915019dc18c1b9b59139684bd6690fdd01af
+  nokogiri (1.19.4-arm-linux-gnu) sha256=a301313e38bb065d68239e79734bcd6f56fb6efaacebde29e9abf2a4735340ca
+  nokogiri (1.19.4-arm-linux-musl) sha256=588923c101bcfa78869734d247d25b598674323e7f22474fc468f6e5647311eb
+  nokogiri (1.19.4-arm64-darwin) sha256=a46db9853286e6597b36ebc6953817d15acf3a299583eb3f89fdc6f91dd63527
+  nokogiri (1.19.4-x86_64-darwin) sha256=7fd17057d3e1f00e9954a74b3cd76595d3d4a5ef233b7ed9599047c204f70551
+  nokogiri (1.19.4-x86_64-linux-gnu) sha256=379fae440b28915e3f19d752ce2dcf8465ed2b2fbefd2a7ca0dd497bc981a06a
+  nokogiri (1.19.4-x86_64-linux-musl) sha256=17dfb7c1fa194ae02fbf7c51a7afc8d278045ab3fdacfd86f91d02d7b274470b
+  pandoc-ruby (2.1.4) sha256=245585c3141e0c4fa65e5050d75598e7072699e64f30bb4392c11e13852bf1f8
+  public_suffix (7.0.5) sha256=1a8bb08f1bbea19228d3bed6e5ed908d1cb4f7c2726d18bd9cadf60bc676f623
+  racc (1.8.1) sha256=4a7f6929691dbec8b5209a0b373bc2614882b55fc5d2e447a21aaa691303d62f
+  reapack-index (1.2.6) sha256=857040166a7d16d71a079bd1f9dae3e28bd5aaee242880b48a8a377e0e3e175a
+  rugged (1.9.6) sha256=c6e45250e51cdf19f6130d050e280ba8d6af475d4c76580f91377a59fe23d3c7
+  stable_sort (1.1.0) sha256=2bdc776be0168ae27a03ed3c72173702f61d63bd8d7bc839c8600a8a125f7cbc
+
+BUNDLED WITH
+   2.6.9

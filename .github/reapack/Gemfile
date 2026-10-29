@@ -1,0 +1,7 @@
+# Tools for the ReaPack index workflows (deploy.yml, check.yml). Every gem version is locked in
+# Gemfile.lock, with checksums, and the workflows install it frozen — a new release of any dependency
+# can't run in the job that holds the write token. To update: change the version here, regenerate the
+# lock on a probe branch, and review the lock diff before it reaches master.
+source "https://rubygems.org"
+
+gem "reapack-index", "1.2.6"
