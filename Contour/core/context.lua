@@ -103,9 +103,11 @@ local RAZOR_SETTLE_SEC = 0.25
 
 local rz            -- last read: { snap, lanes, at = clock time or nil, switchTo = env|nil }
 local settler       -- razor.newSettler, created on the first read
-local settledSnap   -- the snapshot at the last settled state (changedLanes compares against it)
+local settledSnap   -- the snapshot at the last settled state (dragLanes compares against it)
+local shownErr      -- the last razor error message printed to the console (once per distinct message)
 
-function M._resetRazor() rz, settler, settledSnap, M._razorError = nil, nil, nil, nil end  -- test-only
+-- M._razorError is the last razor read's error (nil after a good read); the console gets each distinct message once.
+function M._resetRazor() rz, settler, settledSnap, shownErr, M._razorError = nil, nil, nil, nil, nil end  -- test-only
 
 local RAZOR_API = {
   "GetMasterTrack", "CountTracks", "GetTrack", "GetSetMediaTrackInfo_String",
@@ -258,8 +260,16 @@ end
 -- Adds rangeSource / ranges / hasRange / razorOutside / razorLanes / razorSwitchTo to a detected descriptor.
 local function addRanges(out)
   local ok, lanes, switchTo, spans = pcall(razorRead, out)
-  if not ok then
-    M._razorError = lanes                   -- kept for tests and the console; razor is simply off this frame
+  if ok then
+    M._razorError = nil
+  else
+    -- razor is simply off this frame; say why once per distinct message, as contour.lua does for draw errors
+    local msg = tostring(lanes)
+    M._razorError = msg
+    if msg ~= shownErr then
+      shownErr = msg
+      if reaper.ShowConsoleMsg then reaper.ShowConsoleMsg("Contour razor error: " .. msg .. "\n") end
+    end
     lanes, switchTo, spans = nil, nil, nil
   end
   out.razorLanes = lanes or {}

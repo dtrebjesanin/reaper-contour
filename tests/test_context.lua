@@ -116,7 +116,10 @@ local h   = require("harness")
 local ctx = require("core.context")
 
 -- Stateful module: clear focus-recency memory before each scenario.
-local function fresh() ctx._resetRecency(); ctx._resetRazor(); reset(); installJS(); installRazor() end
+local function fresh()
+  ctx._resetRecency(); ctx._resetRazor(); reset(); installJS(); installRazor()
+  _G.reaper.ShowConsoleMsg, _G.reaper.EnumProjects = nil, nil   -- opt-in per test
+end
 local function det() return ctx.detect().target end
 
 -- An "everything open" baseline: MIDI editor with a valid take AND an arrange envelope selected.
@@ -562,6 +565,34 @@ h.test("a razor read that throws degrades to razor-off instead of breaking detec
   h.eq(d.target, "envelope"); h.eq(d.rangeSource, "timesel"); spansEq(d.ranges, { { 0, 10 } })
   h.eq(#d.razorLanes, 0); h.eq(d.razorSwitchTo, nil)
   h.truthy(tostring(ctx._razorError):find("boom"), "the error is kept for inspection")
+end)
+
+h.test("[M3] a razor error is printed once per distinct message, and cleared by a good read", function()
+  fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
+  local log = {}
+  _G.reaper.ShowConsoleMsg = function(s) log[#log + 1] = s end
+  _G.reaper.GetSetMediaTrackInfo_String = function() error("boom") end
+  S.now = 0; ctx.detect()
+  h.eq(#log, 1, "printed on the first failure")
+  h.truthy(log[1]:find("boom", 1, true) and log[1]:find("razor", 1, true), "the message names the cause: " .. tostring(log[1]))
+  h.eq(log[1]:sub(-1), "\n", "one console line")
+  S.now = 1; ctx.detect(); S.now = 2; ctx.detect()
+  h.eq(#log, 1, "the same message is not printed again")
+  _G.reaper.GetSetMediaTrackInfo_String = function() error("bang") end
+  S.now = 3; ctx.detect()
+  h.eq(#log, 2, "a different message is printed"); h.truthy(log[2]:find("bang", 1, true))
+  h.truthy(tostring(ctx._razorError):find("bang", 1, true), "the last error is kept for inspection")
+  installRazor()                                           -- a good read clears it
+  S.now = 4; local d = ctx.detect()
+  h.eq(ctx._razorError, nil, "cleared after a good read"); h.eq(d.rangeSource, "timesel")
+  h.eq(#log, 2, "a good read prints nothing")
+end)
+
+h.test("[M3] a razor error without ShowConsoleMsg is kept and never throws", function()
+  fresh(); project(); S.env = "ENV_A"
+  _G.reaper.GetSetMediaTrackInfo_String = function() error("boom") end
+  local d = ctx.detect()
+  h.eq(d.target, "envelope"); h.truthy(tostring(ctx._razorError):find("boom", 1, true))
 end)
 
 h.run()
