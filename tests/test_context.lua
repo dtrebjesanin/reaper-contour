@@ -225,10 +225,19 @@ local function spansEq(got, want, msg)
   end
 end
 
+-- detect() for the razor tests. The razor read runs inside a pcall: if it threw, detect() would degrade to
+-- razor-off, which is exactly what the negative tests expect (razorLanes == {}, razorSwitchTo == nil,
+-- rangeSource == "timesel"). Asserting there is no swallowed error keeps those tests honest.
+local function rdet()
+  local d = ctx.detect()
+  h.eq(ctx._razorError, nil, "the razor read threw:")
+  return d
+end
+
 h.test("razor on the selected envelope's lane becomes the range", function()
   fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
   S.tracks[1].razor = '2 4 "{A}"'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.target, "envelope")
   h.eq(d.rangeSource, "razor")
   spansEq(d.ranges, { { 2, 4 } })
@@ -239,7 +248,7 @@ end)
 
 h.test("no razor keeps the time selection as the range", function()
   fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.rangeSource, "timesel")
   spansEq(d.ranges, { { 0, 10 } })
   h.eq(d.hasRange, true); h.eq(d.razorOutside, false)
@@ -248,7 +257,7 @@ end)
 
 h.test("no razor and no time selection: no ranges", function()
   fresh(); project(); S.env = "ENV_A"
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.rangeSource, "timesel")
   h.eq(#d.ranges, 0); h.eq(d.hasRange, false); h.eq(d.razorOutside, false)
 end)
@@ -256,7 +265,7 @@ end)
 h.test("a razor on another lane only keeps the time selection and lists that lane", function()
   fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
   S.tracks[2].razor = '1 2 "{B}"'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.rangeSource, "timesel")
   spansEq(d.ranges, { { 0, 10 } })
   h.eq(#d.razorLanes, 1)
@@ -266,7 +275,7 @@ end)
 h.test("several areas on the target lane are merged and sorted into ranges", function()
   fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
   S.tracks[1].razor = '6 8 "{A}" 1 2 "{A}" 2 3 "{A}"'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.rangeSource, "razor")
   spansEq(d.ranges, { { 1, 3 }, { 6, 8 } })
 end)
@@ -274,15 +283,15 @@ end)
 h.test("ranges are copies: changing them never touches the next read", function()
   fresh(); project(); S.env = "ENV_A"
   S.tracks[1].razor = '2 4 "{A}"'
-  local d1 = ctx.detect(); d1.ranges[1][1] = 99
-  local d2 = ctx.detect()
+  local d1 = rdet(); d1.ranges[1][1] = 99
+  local d2 = rdet()
   spansEq(d2.ranges, { { 2, 4 } })
 end)
 
 h.test("automation item: the razor is clamped to the item's bounds", function()
   fresh(); project(); S.env = "ENV_A"; S.aiCount = 1; S.aiSel[0] = true; S.aiPos = 3; S.aiLen = 2
   S.tracks[1].razor = '0 4 "{A}"'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.target, "ai")
   h.eq(d.rangeSource, "razor")
   spansEq(d.ranges, { { 3, 4 } })
@@ -293,7 +302,7 @@ h.test("[RF 4] an area that only touches the item's edge leaves no range: razorO
   fresh(); project(); S.env = "ENV_A"; S.aiCount = 1; S.aiSel[0] = true; S.aiPos = 3; S.aiLen = 2
   S.timeSel = { 0, 10 }
   S.tracks[1].razor = '0 3 "{A}"'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.rangeSource, "razor", "the lane has a razor, even if all of it is clamped away")
   h.eq(#d.ranges, 0); h.eq(d.razorOutside, true); h.eq(d.hasRange, false)
   h.eq(d.hasTimeSel, true, "the time selection is still reported, just not used")
@@ -301,11 +310,11 @@ end)
 
 h.test("[RF 5] a razor GUID with no envelope is left out of razorLanes and never switches", function()
   fresh(); project(); S.env = "ENV_A"
-  ctx.detect()                                  -- baseline read at now = 0
+  rdet()                                  -- baseline read at now = 0
   S.now = 0.2; S.tracks[1].razor = '1 2 "{GONE}"'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(#d.razorLanes, 0); h.eq(d.razorSwitchTo, nil)
-  S.now = 0.5; d = ctx.detect()                 -- the change has settled; nothing resolves, so no switch
+  S.now = 0.5; d = rdet()                 -- the change has settled; nothing resolves, so no switch
   h.eq(#d.razorLanes, 0); h.eq(d.razorSwitchTo, nil)
   h.eq(d.rangeSource, "timesel")
 end)
@@ -314,7 +323,7 @@ h.test("a razor on the master track is a lane too: label Master", function()
   fresh(); project()
   S.master.envs = { lane("ENV_M", "{M}", "Volume") }
   S.master.razor = '1 2 "{M}"'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(#d.razorLanes, 1); h.eq(d.razorLanes[1].label, "Master: Volume"); h.eq(d.razorLanes[1].env, "ENV_M")
 end)
 
@@ -322,7 +331,7 @@ h.test("an unnamed track is labelled Track N, 1-based", function()
   fresh(); project()
   S.tracks[2].name = ""
   S.tracks[2].razor = '1 2 "{P}"'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.razorLanes[1].label, "Track 2: Pan")
 end)
 
@@ -330,7 +339,7 @@ h.test("razorLanes follow track order, then the order of the razor string", func
   fresh(); project()
   S.tracks[1].razor = '1 2 "{A}"'
   S.tracks[2].razor = '1 2 "{P}" 1 2 "{B}"'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(#d.razorLanes, 3)
   h.eq(d.razorLanes[1].guid, "{A}"); h.eq(d.razorLanes[2].guid, "{P}"); h.eq(d.razorLanes[3].guid, "{B}")
 end)
@@ -339,7 +348,7 @@ h.test("a take envelope uses the item lane of its track, clamped to the item", f
   fresh(); project()
   S.env = "ENV_TAKE"; S.takeOf.ENV_TAKE = "TK"; S.takeItem.TK = { handle = "IT", track = "T1", pos = 2, len = 6 }
   S.tracks[1].razor = '0 4 ""'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.target, "envelope"); h.eq(d.details.take, "TK")
   h.eq(d.rangeSource, "razor")
   spansEq(d.ranges, { { 2, 4 } })
@@ -350,7 +359,7 @@ h.test("a take envelope with the razor wholly outside its item: razorOutside", f
   S.env = "ENV_TAKE"; S.takeOf.ENV_TAKE = "TK"; S.takeItem.TK = { handle = "IT", track = "T1", pos = 2, len = 6 }
   S.timeSel = { 0, 10 }
   S.tracks[1].razor = '0 1 ""'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.rangeSource, "razor"); h.eq(#d.ranges, 0); h.eq(d.razorOutside, true); h.eq(d.hasRange, false)
 end)
 
@@ -360,127 +369,127 @@ h.test("a take envelope ignores razors on envelope lanes and on other tracks", f
   S.timeSel = { 0, 10 }
   S.tracks[1].razor = '3 4 "{A}"'
   S.tracks[2].razor = '3 4 ""'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.rangeSource, "timesel"); spansEq(d.ranges, { { 0, 10 } })
 end)
 
 h.test("MIDI CC always uses the time selection, whatever the razor says", function()
   fresh(); project(); S.me, S.take = ME, "TAKE"; S.selCC = true; S.focus = MIDIVIEW; S.timeSel = { 1, 5 }
   S.tracks[1].razor = '2 4 "{A}" 2 4 ""'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.target, "cc")
   h.eq(d.rangeSource, "timesel"); spansEq(d.ranges, { { 1, 5 } })
 end)
 
 h.test("switch fires once, after the change has settled", function()
   fresh(); project(); S.env = "ENV_A"
-  S.now = 0;   h.eq(ctx.detect().razorSwitchTo, nil, "baseline read")
+  S.now = 0;   h.eq(rdet().razorSwitchTo, nil, "baseline read")
   S.now = 0.2; S.tracks[2].razor = '1 2 "{B}"'
-  h.eq(ctx.detect().razorSwitchTo, nil, "just changed")
-  S.now = 0.5; h.eq(ctx.detect().razorSwitchTo, "ENV_B", "stable for 0.3 s")
-  S.now = 0.7; h.eq(ctx.detect().razorSwitchTo, nil, "only once")
-  S.now = 1.5; h.eq(ctx.detect().razorSwitchTo, nil, "still only once")
+  h.eq(rdet().razorSwitchTo, nil, "just changed")
+  S.now = 0.5; h.eq(rdet().razorSwitchTo, "ENV_B", "stable for 0.3 s")
+  S.now = 0.7; h.eq(rdet().razorSwitchTo, nil, "only once")
+  S.now = 1.5; h.eq(rdet().razorSwitchTo, nil, "still only once")
 end)
 
 h.test("switch waits for the mouse button to come up", function()
   fresh(); project(); S.env = "ENV_A"
-  S.now = 0;   ctx.detect()
-  S.now = 0.2; S.tracks[2].razor = '1 2 "{B}"'; ctx.detect()
+  S.now = 0;   rdet()
+  S.now = 0.2; S.tracks[2].razor = '1 2 "{B}"'; rdet()
   S.now = 0.5; S.mouse = 1
-  h.eq(ctx.detect().razorSwitchTo, nil, "left button still down")
+  h.eq(rdet().razorSwitchTo, nil, "left button still down")
   S.now = 0.6; S.mouse = 0
-  h.eq(ctx.detect().razorSwitchTo, "ENV_B", "released and stable")
+  h.eq(rdet().razorSwitchTo, "ENV_B", "released and stable")
 end)
 
 h.test("without js_ReaScriptAPI stability alone decides", function()
   fresh(); project(); S.env = "ENV_A"
   _G.reaper.JS_Mouse_GetState = nil
-  S.now = 0;   ctx.detect()
-  S.now = 0.2; S.tracks[2].razor = '1 2 "{B}"'; ctx.detect()
-  S.now = 0.5; h.eq(ctx.detect().razorSwitchTo, "ENV_B")
+  S.now = 0;   rdet()
+  S.now = 0.2; S.tracks[2].razor = '1 2 "{B}"'; rdet()
+  S.now = 0.5; h.eq(rdet().razorSwitchTo, "ENV_B")
 end)
 
 h.test("a change that keeps moving does not switch until it stops", function()
   fresh(); project(); S.env = "ENV_A"
-  S.now = 0; ctx.detect()
-  S.now = 0.2; S.tracks[2].razor = '1 2 "{B}"'; ctx.detect()
-  S.now = 0.4; S.tracks[2].razor = '1 3 "{B}"'; h.eq(ctx.detect().razorSwitchTo, nil, "still dragging")
-  S.now = 0.6; S.tracks[2].razor = '1 4 "{B}"'; h.eq(ctx.detect().razorSwitchTo, nil, "still dragging")
-  S.now = 0.9; h.eq(ctx.detect().razorSwitchTo, "ENV_B", "stopped for 0.3 s")
+  S.now = 0; rdet()
+  S.now = 0.2; S.tracks[2].razor = '1 2 "{B}"'; rdet()
+  S.now = 0.4; S.tracks[2].razor = '1 3 "{B}"'; h.eq(rdet().razorSwitchTo, nil, "still dragging")
+  S.now = 0.6; S.tracks[2].razor = '1 4 "{B}"'; h.eq(rdet().razorSwitchTo, nil, "still dragging")
+  S.now = 0.9; h.eq(rdet().razorSwitchTo, "ENV_B", "stopped for 0.3 s")
 end)
 
 h.test("[RF 3] two lanes of one drag never switch", function()
   fresh(); project(); S.env = "ENV_A"
-  S.now = 0; ctx.detect()
+  S.now = 0; rdet()
   S.now = 0.2; S.tracks[2].razor = '1 2 "{B}" 1 2 "{P}"'
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(#d.razorLanes, 2)
-  S.now = 0.5; d = ctx.detect()
+  S.now = 0.5; d = rdet()
   h.eq(d.razorSwitchTo, nil); h.eq(#d.razorLanes, 2)
-  S.now = 0.8; h.eq(ctx.detect().razorSwitchTo, nil)
+  S.now = 0.8; h.eq(rdet().razorSwitchTo, nil)
 end)
 
 h.test("a new area on one lane switches even when another lane already has areas", function()
   fresh(); project(); S.env = "ENV_A"
   S.tracks[1].razor = '1 2 "{A}"'
-  S.now = 0; ctx.detect()
-  S.now = 0.2; S.tracks[2].razor = '5 6 "{P}"'; ctx.detect()
-  S.now = 0.5; h.eq(ctx.detect().razorSwitchTo, "ENV_P")
+  S.now = 0; rdet()
+  S.now = 0.2; S.tracks[2].razor = '5 6 "{P}"'; rdet()
+  S.now = 0.5; h.eq(rdet().razorSwitchTo, "ENV_P")
 end)
 
 h.test("a removed area never switches", function()
   fresh(); project(); S.env = "ENV_A"
   S.tracks[2].razor = '1 2 "{B}"'
-  S.now = 0; ctx.detect()
-  S.now = 0.2; S.tracks[2].razor = ""; ctx.detect()
-  S.now = 0.5; h.eq(ctx.detect().razorSwitchTo, nil)
+  S.now = 0; rdet()
+  S.now = 0.2; S.tracks[2].razor = ""; rdet()
+  S.now = 0.5; h.eq(rdet().razorSwitchTo, nil)
 end)
 
 h.test("item-lane areas never switch", function()
   fresh(); project(); S.env = "ENV_A"
-  S.now = 0; ctx.detect()
-  S.now = 0.2; S.tracks[2].razor = '1 2 ""'; ctx.detect()
-  S.now = 0.5; h.eq(ctx.detect().razorSwitchTo, nil)
+  S.now = 0; rdet()
+  S.now = 0.2; S.tracks[2].razor = '1 2 ""'; rdet()
+  S.now = 0.5; h.eq(rdet().razorSwitchTo, nil)
 end)
 
 h.test("areas present at the start do not switch", function()
   fresh(); project(); S.env = "ENV_A"
   S.tracks[2].razor = '1 2 "{B}"'
   for _, t in ipairs({ 0, 0.2, 0.5, 1.0 }) do
-    S.now = t; h.eq(ctx.detect().razorSwitchTo, nil, "at " .. t)
+    S.now = t; h.eq(rdet().razorSwitchTo, nil, "at " .. t)
   end
 end)
 
 h.test("razor reads are throttled to one per 0.1 s", function()
   fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
-  S.now = 1.0; h.eq(ctx.detect().rangeSource, "timesel")
+  S.now = 1.0; h.eq(rdet().rangeSource, "timesel")
   S.tracks[1].razor = '2 4 "{A}"'
-  S.now = 1.05; h.eq(ctx.detect().rangeSource, "timesel", "inside the throttle window: last snapshot")
-  S.now = 1.12; h.eq(ctx.detect().rangeSource, "razor", "window over: fresh read")
+  S.now = 1.05; h.eq(rdet().rangeSource, "timesel", "inside the throttle window: last snapshot")
+  S.now = 1.12; h.eq(rdet().rangeSource, "razor", "window over: fresh read")
 end)
 
 h.test("a clock that jumps back forces a fresh read", function()
   fresh(); project(); S.env = "ENV_A"
-  S.now = 50; ctx.detect()
+  S.now = 50; rdet()
   S.tracks[1].razor = '2 4 "{A}"'
-  S.now = 1;  h.eq(ctx.detect().rangeSource, "razor")
+  S.now = 1;  h.eq(rdet().rangeSource, "razor")
 end)
 
 h.test("without time_precise every call reads", function()
   fresh(); project(); S.env = "ENV_A"
   _G.reaper.time_precise = nil
-  h.eq(ctx.detect().rangeSource, "timesel")
+  h.eq(rdet().rangeSource, "timesel")
   S.tracks[1].razor = '2 4 "{A}"'
-  h.eq(ctx.detect().rangeSource, "razor")
+  h.eq(rdet().rangeSource, "razor")
 end)
 
 h.test("_resetRazor forgets the baseline: areas present afterwards do not switch either", function()
   fresh(); project(); S.env = "ENV_A"
-  S.now = 0; ctx.detect()
-  S.now = 0.2; S.tracks[2].razor = '1 2 "{B}"'; ctx.detect()
+  S.now = 0; rdet()
+  S.now = 0.2; S.tracks[2].razor = '1 2 "{B}"'; rdet()
   ctx._resetRazor()
-  S.now = 0.5; h.eq(ctx.detect().razorSwitchTo, nil, "first read after the reset is a baseline")
-  S.now = 1.0; h.eq(ctx.detect().razorSwitchTo, nil)
+  S.now = 0.5; h.eq(rdet().razorSwitchTo, nil, "first read after the reset is a baseline")
+  S.now = 1.0; h.eq(rdet().razorSwitchTo, nil)
 end)
 
 h.test("engageArrange makes the arrange side win over a lingering CC selection", function()
@@ -495,12 +504,12 @@ h.test("no razor API: razor support is off, the time selection is the range", fu
   fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
   S.tracks[1].razor = '2 4 "{A}"'
   removeRazor()
-  local d = ctx.detect()
+  local d = rdet()
   h.eq(d.rangeSource, "timesel"); spansEq(d.ranges, { { 0, 10 } })
   h.eq(d.hasRange, true); h.eq(d.razorOutside, false)
   h.eq(#d.razorLanes, 0); h.eq(d.razorSwitchTo, nil)
   S.timeSel = { 0, 0 }
-  d = ctx.detect()
+  d = rdet()
   h.eq(#d.ranges, 0); h.eq(d.hasRange, false)
 end)
 
