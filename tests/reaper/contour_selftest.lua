@@ -15,7 +15,7 @@
 --   * MIDI CC round-trip: MIDI_InsertCC + MIDI_SetCCShape + MIDI_GetCC against a real take.
 --   * AUTOMATION ITEM round-trip: the *Ex point family + item-bounds handling.
 --   * RAZOR AREA round-trip: P_RAZOREDITS on a Volume lane -> context.detect() -> Generate writes only
---     inside the razor span.
+--     inside the razor span, even with a different time selection set (the razor beats it).
 --
 -- This is NOT part of the shipped package (it lives under tests/, not in contour.lua's @provides).
 
@@ -114,7 +114,9 @@ end)
 -- A razor area on the target envelope's lane is the range for Generate (it beats the time selection).
 -- Covers what stubs can lie about: the live P_RAZOREDITS string REAPER stores, the envelope GUID that
 -- string must name, context.detect() resolving the selected envelope's lane to it, and Generate writing
--- only inside the razor span. Uses the track's Volume envelope; the lane's razor is always cleared after.
+-- only inside the razor span. A time selection of 5..8 s is set while it runs, so "the razor beats the time
+-- selection" is exercised live. Uses the track's Volume envelope; the lane's razor is always cleared and the
+-- user's own time selection is always put back after.
 suite("razor area: detect + Generate write only inside the razor span (Volume lane)", function()
   local okCtx, context  = pcall(require, "core.context")
   local okGen, generate = pcall(require, "ui.generate")
@@ -136,7 +138,11 @@ suite("razor area: detect + Generate write only inside the razor span (Volume la
   check(okGuid and guid and guid ~= "", "GetSetEnvelopeInfo_String(GUID) returned nothing")
 
   local function clearRazor() reaper.GetSetMediaTrackInfo_String(track, "P_RAZOREDITS", "", true) end
+  -- the user's time selection (0, 0 = none), put back in the cleanup path below whatever happens
+  local savedT0, savedT1 = reaper.GetSet_LoopTimeRange(false, false, 0, 0, false)
   local okRun, err = pcall(function()
+    -- a time selection that does NOT cover the razor: the razor must still win
+    reaper.GetSet_LoopTimeRange(true, false, 5, 8, false)
     -- 3. a razor area 1..2 s on that lane
     local razor = ('1.0 2.0 "%s"'):format(guid)
     reaper.GetSetMediaTrackInfo_String(track, "P_RAZOREDITS", razor, true)
@@ -146,10 +152,13 @@ suite("razor area: detect + Generate write only inside the razor span (Volume la
     -- 4. select the envelope; detect() must report the razor as the range source
     reaper.SetCursorContext(2, env)
     if context.engageArrange then context.engageArrange() end   -- a lingering MIDI editor selection must not win
+    if context._resetRazor then context._resetRazor() end       -- a fresh razor state: this read is the baseline
     local det = context.detect()
     check(det.target == "envelope" and det.details and det.details.env == env,
       "detect() did not resolve the selected Volume envelope (target=" .. tostring(det.target) .. ")")
-    check(det.rangeSource == "razor", "rangeSource is " .. tostring(det.rangeSource) .. ", expected razor")
+    check(det.hasTimeSel and approx(det.t0, 5.0) and approx(det.t1, 8.0),
+      "the 5..8 s time selection was not set (hasTimeSel=" .. tostring(det.hasTimeSel) .. ")")
+    check(det.rangeSource == "razor", "rangeSource is " .. tostring(det.rangeSource) .. ", expected razor (it must beat the 5..8 s time selection)")
     check(det.ranges and #det.ranges == 1, "expected exactly one razor range, got " .. tostring(det.ranges and #det.ranges))
     check(approx(det.ranges[1][1] or det.ranges[1].t0, 1.0) and approx(det.ranges[1][2] or det.ranges[1].t1, 2.0),
       "razor range is not 1..2")
@@ -174,6 +183,7 @@ suite("razor area: detect + Generate write only inside the razor span (Volume la
     end
   end)
   clearRazor()   -- 6. never leave a razor behind, pass or fail
+  reaper.GetSet_LoopTimeRange(true, false, savedT0, savedT1, false)   -- ...nor the time selection we replaced
   if not okRun then error(err, 0) end
 end)
 
