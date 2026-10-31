@@ -1519,4 +1519,157 @@ h.test("the lane switch marks the arrange as engaged, like a chooser pick", func
   h.eq(engaged, 1, "engageArrange ran once")
 end)
 
+-- ---- razor areas: Transform's "Time selection" scope takes the lane's one razor area ----------------------
+-- The stub's fixture points sit at t = 0, 2, 4 and are all selected, so these tests either hand the overlay
+-- the panel's "timesel" scope (ExtState tr_scope, consumed by start) or deselect the points first.
+local MSG_ONE_AREA = "Transform needs one razor area on this lane"
+local function trParams()
+  overlay.params = { knob = 30, shape = "power", symmetrical = false, flipMode = "absolute" }
+end
+local function deselectPoints()
+  for _, list in ipairs({ stub.envPoints, stub.aiPoints }) do   -- track envelope, automation item
+    for _, p in ipairs(list) do p.sel = false end
+  end
+end
+
+h.test("overlay uses the single razor area", function()
+  stub.reset(); trParams()
+  stub.rec.extState.tr_scope = "timesel"
+  -- the time selection is 0..4; the one razor area is 2..4, so the point at t = 0 stays outside the region
+  local started, serr = overlay.start(CTX, razor(detEnv(), { { 2, 4 } }))
+  h.truthy(started, "start: " .. tostring(serr))
+  local b = overlay._boundsNow()
+  h.almost(b.tmin, 2, 1e-9, "region starts at the razor area")
+  h.almost(b.tmax, 4, 1e-9, "region ends at the razor area")
+  overlay.finish()
+  -- with no handoff and no selected points, a razor area alone is a range to work on
+  stub.reset(); trParams(); deselectPoints()
+  local det = razor(detEnv(), { { 2, 4 } }); det.hasTimeSel = false
+  started, serr = overlay.start(CTX, det)
+  h.truthy(started, "a razor area is a range even without a time selection: " .. tostring(serr))
+  b = overlay._boundsNow()
+  h.almost(b.tmin, 2); h.almost(b.tmax, 4)
+  overlay.finish()
+end)
+
+h.test("two areas refuse", function()
+  stub.reset(); trParams()
+  stub.rec.extState.tr_scope = "timesel"
+  local started, msg = overlay.start(CTX, razor(detEnv(), { { 0, 1 }, { 2, 3 } }))
+  h.eq(started, false)
+  h.eq(msg, MSG_ONE_AREA)
+  -- no selected points and no handoff: the time-selection scope is all that is left, so it refuses too
+  stub.reset(); trParams(); deselectPoints()
+  started, msg = overlay.start(CTX, razor(detAI(), { { 0, 1 }, { 2, 3 } }))
+  h.eq(started, false)
+  h.eq(msg, MSG_ONE_AREA)
+  -- selected points still work with several areas: the points scope never asks for a razor area
+  stub.reset(); trParams()
+  stub.rec.extState.tr_scope = "points"
+  started = overlay.start(CTX, razor(detEnv(), { { 0, 1 }, { 2, 3 } }))
+  h.truthy(started, "Selected points ignore the razor areas")
+  overlay.finish()
+end)
+
+h.test("a razor area outside the item says so, never the time selection", function()
+  stub.reset(); trParams(); deselectPoints()
+  local det = detAI(); det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "razor", {}, false, true
+  local started, msg = overlay.start(CTX, det)
+  h.eq(started, false)
+  h.eq(msg, "The razor area is outside this automation item")
+  stub.reset(); trParams(); deselectPoints()
+  det = detEnv(); det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "razor", {}, false, true
+  started, msg = overlay.start(CTX, det)
+  h.eq(started, false)
+  h.eq(msg, "The razor area is outside this item")
+  -- the time selection (0..4 on detEnv) is never the fallback: even with the time-selection handoff
+  stub.reset(); trParams(); deselectPoints()
+  stub.rec.extState.tr_scope = "timesel"
+  started, msg = overlay.start(CTX, det)
+  h.eq(started, false)
+  h.eq(msg, "The razor area is outside this item")
+end)
+
+h.test("overlay: the time selection path is unchanged for descriptors without a razor", function()
+  -- the old fields only
+  stub.reset(); trParams()
+  stub.rec.extState.tr_scope = "timesel"
+  local started, serr = overlay.start(CTX, detEnv())
+  h.truthy(started, tostring(serr))
+  local b = overlay._boundsNow()
+  h.almost(b.tmin, 0); h.almost(b.tmax, 4)
+  overlay.finish()
+  -- with the fields core/context.detect fills for a time selection
+  stub.reset(); trParams()
+  stub.rec.extState.tr_scope = "timesel"
+  local det = detEnv()
+  det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "timesel", { { 0, 4 } }, true, false
+  started, serr = overlay.start(CTX, det)
+  h.truthy(started, tostring(serr))
+  b = overlay._boundsNow()
+  h.almost(b.tmin, 0); h.almost(b.tmax, 4)
+  overlay.finish()
+  -- no time selection and no selected points: today's message
+  stub.reset(); trParams(); deselectPoints()
+  det = detEnv(); det.hasTimeSel = false
+  local msg
+  started, msg = overlay.start(CTX, det)
+  h.eq(started, false)
+  h.eq(msg, "Select some points, or make a time selection, then launch Transform")
+end)
+
+-- Draw the Transform panel for `det` with every Button clicked. Returns the warn-coloured and the other
+-- texts, plus the BeginDisabled / EndDisabled calls (the stub's own BeginDisabled disables nothing, so the
+-- panel must not trust it alone: the click is ignored in code too).
+local function trPanelFrame(det, scope)
+  stub.reset()
+  transform_panel.scope = scope or "timesel"
+  transform_panel.status = nil
+  local warns, begins, ends = {}, {}, 0
+  with({
+    ImGui_TextColored = function(_c, col, s) if col == theme.C.warn then warns[#warns + 1] = s end end,
+    ImGui_Button = function() return true end,
+    ImGui_BeginDisabled = function(_c, d) begins[#begins + 1] = d end,
+    ImGui_EndDisabled = function() ends = ends + 1 end,
+  }, function() transform_panel.draw(CTX, newState(), det) end)
+  return warns, begins, ends
+end
+
+h.test("panel message and disabled launch", function()
+  local warns, begins, ends = trPanelFrame(razor(detEnv(), { { 0, 1 }, { 2, 3 } }))
+  h.eq(#warns, 1, "one warning: " .. table.concat(warns, "|"))
+  h.eq(warns[1], MSG_ONE_AREA)
+  h.eq(#begins, 1); h.eq(begins[1], true, "Launch is disabled")
+  h.eq(ends, 1, "BeginDisabled is closed")
+  h.eq(stub.rec.extState.tr_scope, nil, "a click on the disabled Launch writes nothing")
+  -- the same with the Selected points scope: the message belongs to the lane, not to the scope
+  warns = trPanelFrame(razor(detAI(), { { 0, 1 }, { 2, 3 }, { 5, 6 } }), "points")
+  h.eq(warns[1], MSG_ONE_AREA)
+  h.eq(stub.rec.extState.tr_scope, nil)
+end)
+
+h.test("panel: one razor area, a time selection, or no descriptor keeps Launch enabled", function()
+  local cases = {
+    { "one razor area",   razor(detEnv(), { { 2, 4 } }) },
+    { "time selection",   detEnv() },
+    { "timesel fields",   (function() local d = detEnv(); d.rangeSource, d.ranges = "timesel", { { 0, 4 } }; return d end)() },
+    { "razor, outside",   (function() local d = detAI(); d.rangeSource, d.ranges, d.razorOutside = "razor", {}, true; return d end)() },
+    { "no descriptor",    nil },
+  }
+  for _, c in ipairs(cases) do
+    local warns, begins, ends = trPanelFrame(c[2])
+    h.eq(#warns, 0, c[1] .. ": no warning (" .. table.concat(warns, "|") .. ")")
+    h.eq(#begins, 1, c[1] .. ": one BeginDisabled"); h.eq(begins[1], false, c[1] .. ": Launch is enabled")
+    h.eq(ends, 1, c[1] .. ": balanced")
+    h.eq(stub.rec.extState.tr_scope, "timesel", c[1] .. ": the click hands the scope to the tool")
+  end
+  -- shell hands its descriptor on to the panel (the body is the Transform panel on the Transform tab)
+  stub.reset()
+  local st = newState(); st.op = "transform"
+  local shown = {}
+  with({ ImGui_TextColored = function(_c, col, s) if col == theme.C.warn then shown[#shown + 1] = s end end },
+    function() shell.draw(CTX, st, razor(detEnv(), { { 0, 1 }, { 2, 3 } })) end)
+  h.truthy(table.concat(shown, "|"):find(MSG_ONE_AREA, 1, true), "shell.draw reaches the panel's message: " .. table.concat(shown, "|"))
+end)
+
 h.run()

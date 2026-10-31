@@ -22,7 +22,13 @@ local function resolveCmd()
   return reaper.NamedCommandLookup("_Contour_Transform")
 end
 
-function M.draw(ctx, state)
+-- Shown (and Launch disabled) when the target lane has several razor areas: the overlay has one box, so it
+-- needs one span. Same text as ui/overlay.lua's refusal.
+local MSG_ONE_AREA = "Transform needs one razor area on this lane"
+
+function M.draw(ctx, state, detected)
+  local manyAreas = detected ~= nil and detected.rangeSource == "razor"
+                    and type(detected.ranges) == "table" and #detected.ranges > 1
   theme.sectionHeader(ctx, "Transform (mouse overlay)")
   reaper.ImGui_TextColored(ctx, theme.C.hint, "Pick a scope, then Launch — shaping controls are in the tool.")
   reaper.ImGui_Separator(ctx)
@@ -34,11 +40,24 @@ function M.draw(ctx, state)
   if rPts then M.scope = "points" end
   if rTS  then M.scope = "timesel" end
 
-  if theme.accentButton(ctx, "Launch Transform##tr_launch") then
-    reaper.SetExtState("Contour", "tr_scope", M.scope, false)  -- one-time scope handoff
-    local cmd = resolveCmd()
-    if cmd ~= 0 then reaper.Main_OnCommand(cmd, 0); M.status = nil  -- clear any stale prior-launch error
-    else M.status = "Couldn't locate contour_transform.lua — run it once from the Action list." end
+  if manyAreas then reaper.ImGui_TextColored(ctx, theme.C.warn, MSG_ONE_AREA) end
+
+  -- Launch: disabled while the lane has several razor areas. A disabled button reports no click, but the
+  -- click is ignored in code too, so nothing reaches ExtState however the button was drawn.
+  local function launch()
+    if theme.accentButton(ctx, "Launch Transform##tr_launch") and not manyAreas then
+      reaper.SetExtState("Contour", "tr_scope", M.scope, false)  -- one-time scope handoff
+      local cmd = resolveCmd()
+      if cmd ~= 0 then reaper.Main_OnCommand(cmd, 0); M.status = nil  -- clear any stale prior-launch error
+      else M.status = "Couldn't locate contour_transform.lua — run it once from the Action list." end
+    end
+  end
+  if reaper.ImGui_BeginDisabled then
+    reaper.ImGui_BeginDisabled(ctx, manyAreas)
+    launch()
+    reaper.ImGui_EndDisabled(ctx)
+  elseif not manyAreas then
+    launch()  -- an older ReaImGui cannot grey the button out, so it is simply not drawn
   end
   reaper.ImGui_SameLine(ctx)
   reaper.ImGui_TextColored(ctx, theme.C.hint, "(or a hotkey on contour_transform.lua)")

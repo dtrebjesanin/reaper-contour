@@ -297,7 +297,7 @@ function M.draw(ctx, state, detected, opts)
     elseif state.op == "reduce" then
       reduce.draw(ctx, state, detected)
     else
-      transform_panel.draw(ctx, state)
+      transform_panel.draw(ctx, state, detected)
     end
   end)
   reaper.ImGui_EndChild(ctx)
