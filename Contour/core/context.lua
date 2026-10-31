@@ -201,11 +201,11 @@ local function razorState()
   if settledSnap == nil then
     settledSnap = snap                      -- first read: the baseline, never a change
   elseif settled then
-    local only, n = nil, 0
-    for _, guid in ipairs(razor.changedLanes(settledSnap, snap)) do
-      if byGuid[guid] then only, n = byGuid[guid], n + 1 end
-    end
-    if n == 1 then switchTo = only end      -- two or more lanes: the chooser's job, never a guess
+    -- dragLanes, not changedLanes: a drag over two lanes where one already had that span changes only the
+    -- other, and that must not read as "one lane". Two or more lanes (or a lane we cannot resolve among
+    -- them) is the chooser's job, never a guess.
+    local hit = razor.dragLanes(settledSnap, snap)
+    if #hit == 1 and byGuid[hit[1]] then switchTo = byGuid[hit[1]] end
     settledSnap = snap
   end
   rz = { snap = snap, lanes = lanes, at = now, switchTo = switchTo }

@@ -429,6 +429,27 @@ h.test("[RF 3] two lanes of one drag never switch", function()
   S.now = 0.8; h.eq(rdet().razorSwitchTo, nil)
 end)
 
+h.test("[F1] a drag over two lanes never switches, even when one lane already had that span", function()
+  fresh(); project(); S.env = "ENV_A"
+  S.tracks[1].razor = '1 3 "{A}"'                      -- Lead: Volume already has 1..3 s
+  S.now = 0; rdet()
+  S.now = 0.2; S.tracks[2].razor = '1 3 "{B}"'         -- the drag 1..3 s over Lead + Pad changes only Pad
+  h.eq(#rdet().razorLanes, 2)
+  S.now = 0.5; h.eq(rdet().razorSwitchTo, nil, "one changed lane, but two lanes share the span")
+  S.now = 1.0; h.eq(rdet().razorSwitchTo, nil)
+end)
+
+h.test("[F1] without js: a pause on one lane switches, the continuation to two lanes does not", function()
+  fresh(); project(); S.env = "ENV_A"
+  _G.reaper.JS_Mouse_GetState = nil
+  S.now = 0; rdet()
+  S.now = 0.2; S.tracks[2].razor = '1 3 "{B}"'; rdet()
+  S.now = 0.5; h.eq(rdet().razorSwitchTo, "ENV_B", "a pause of 0.3 s on Pad alone switches to Pad")
+  S.now = 0.7; S.tracks[2].razor = '1 3 "{B}" 1 3 "{P}"'; rdet()    -- the drag goes on to a second lane
+  S.now = 1.0; h.eq(rdet().razorSwitchTo, nil, "the same span on a second lane: no second switch")
+  S.now = 1.5; h.eq(rdet().razorSwitchTo, nil)
+end)
+
 h.test("a new area on one lane switches even when another lane already has areas", function()
   fresh(); project(); S.env = "ENV_A"
   S.tracks[1].razor = '1 2 "{A}"'

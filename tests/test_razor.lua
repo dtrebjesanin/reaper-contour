@@ -214,6 +214,59 @@ h.test("changedLanes follows cur.order", function()
   eqList(razor.changedLanes(prev, cur), { "{B}", "{C}" })
 end)
 
+-- ── dragLanes ────────────────────────────────────────────────────────────────
+
+h.test("dragLanes of a drag on one new lane is that lane alone", function()
+  local prev = razor.snapshot({ { track = "T1", raw = '1 3 "{A}"' } })
+  local cur = razor.snapshot({ { track = "T1", raw = '1 3 "{A}"' }, { track = "T2", raw = '5 6 "{B}"' } })
+  eqList(razor.dragLanes(prev, cur), { "{B}" })
+end)
+
+h.test("dragLanes [F1]: a new span that another lane already has belongs to a multi-lane drag", function()
+  -- Synth: Volume already had 1..3 s; a drag of 1..3 s across Synth and Pad changes only Pad.
+  local prev = razor.snapshot({ { track = "T1", raw = '1 3 "{A}"' } })
+  local cur = razor.snapshot({ { track = "T1", raw = '1 3 "{A}"' }, { track = "T2", raw = '1 3 "{B}"' } })
+  eqList(razor.changedLanes(prev, cur), { "{B}" })
+  eqList(razor.dragLanes(prev, cur), { "{A}", "{B}" })
+end)
+
+h.test("dragLanes counts a shared span within the 1e-6 tolerance, not beyond it", function()
+  local prev = razor.snapshot({ { track = "T1", raw = '1 3 "{A}"' } })
+  local near = razor.snapshot({ { track = "T1", raw = '1 3 "{A}"' }, { track = "T2", raw = '1.0000005 3.0000005 "{B}"' } })
+  local far = razor.snapshot({ { track = "T1", raw = '1 3 "{A}"' }, { track = "T2", raw = '1.00001 3 "{B}"' } })
+  eqList(razor.dragLanes(prev, near), { "{A}", "{B}" })
+  eqList(razor.dragLanes(prev, far), { "{B}" })
+end)
+
+h.test("dragLanes does not count a lane that merely overlaps the new span", function()
+  local prev = razor.snapshot({ { track = "T1", raw = '0 10 "{A}"' } })
+  local cur = razor.snapshot({ { track = "T1", raw = '0 10 "{A}"' }, { track = "T2", raw = '1 3 "{B}"' } })
+  eqList(razor.dragLanes(prev, cur), { "{B}" })
+end)
+
+h.test("dragLanes ignores item lanes and the changed lane's own spans", function()
+  local prev = razor.snapshot({ { track = "T1", raw = '' } })
+  local cur = razor.snapshot({ { track = "T1", raw = '1 3 "{A}" 1 3 ""' } })
+  eqList(razor.dragLanes(prev, cur), { "{A}" })
+end)
+
+h.test("dragLanes of two new lanes sharing a span is both, in cur.order", function()
+  local cur = razor.snapshot({ { track = "T1", raw = '1 3 "{A}"' }, { track = "T2", raw = '1 3 "{B}"' } })
+  eqList(razor.dragLanes(nil, cur), { "{A}", "{B}" })
+  eqList(razor.dragLanes(razor.snapshot({}), cur), { "{A}", "{B}" })
+end)
+
+h.test("dragLanes of an unchanged snapshot is empty", function()
+  local s = twoTrackSnap()
+  eqList(razor.dragLanes(s, s), {})
+end)
+
+h.test("dragLanes pulls in every lane that shares the new span", function()
+  local prev = razor.snapshot({ { track = "T1", raw = '1 3 "{A}"' } })
+  local cur = razor.snapshot({ { track = "T1", raw = '1 3 "{A}"' }, { track = "T2", raw = '1 3 "{B}" 1 3 "{C}"' } })
+  eqList(razor.dragLanes(prev, cur), { "{A}", "{B}", "{C}" })
+end)
+
 -- ── settler ──────────────────────────────────────────────────────────────────
 
 h.test("settler fires once after the signature has been stable", function()

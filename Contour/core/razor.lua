@@ -167,6 +167,31 @@ function M.changedLanes(prev, cur)
   return out
 end
 
+--- The envelope lanes one drag touched, as a list of GUIDs in cur.order: the changed lanes plus every
+--- other envelope lane of `cur` that has one of their NEW spans too (both ends within 1e-6). A drag over
+--- several lanes gives them all the same span, but changedLanes only reports the ones whose spans differ
+--- from `prev`: when one of the lanes already had that span, only the other shows as changed. A caller
+--- that switches lanes must act only when this list has exactly one member. Item lanes do not count.
+function M.dragLanes(prev, cur)
+  local inSet = {}
+  for _, guid in ipairs(M.changedLanes(prev, cur)) do
+    inSet[guid] = true
+    local old = prev and M.envSpans(prev, guid) or {}
+    for _, sp in ipairs(M.envSpans(cur, guid)) do
+      if not hasSpan(old, sp) then
+        for _, other in ipairs(cur.order) do
+          if other ~= guid and hasSpan(M.envSpans(cur, other), sp) then inSet[other] = true end
+        end
+      end
+    end
+  end
+  local out = {}
+  for _, guid in ipairs(cur.order) do
+    if inSet[guid] then out[#out + 1] = guid end
+  end
+  return out
+end
+
 -- ── settler ──────────────────────────────────────────────────────────────────
 
 local Settler = {}
