@@ -172,8 +172,6 @@ end
 M.PALETTES = {
   { id = "auto",       name = "Auto (REAPER theme)" },
   { id = "contour",    name = "Contour",     full = CONTOUR },
-  { id = "danitreble", name = "Dani Treble", spec = { bg = 0x121415, field = 0x1E2224, text = 0xE6E1D8, dim = 0x8A948D,
-      accent = 0x4FA9CF, onAccent = 0x0E1A20, hdr = 0x4FA9CF, grab = 0x4FA9CF } },
   { id = "cassatt",    name = "Cassatt",     spec = { bg = 0x0F1A11, field = 0x1C2E1E, text = 0xECEFE4, dim = 0x9AAA96,
       accent = 0x7FA074, onAccent = 0x0E2810, hdr = 0xC1D1AA, grab = 0x7FA074 } },
   { id = "kandinsky",  name = "Kandinsky",   spec = { bg = 0x1C1C1E, field = 0x2C2B2F, text = 0xE8E6E3, dim = 0x989CA8,

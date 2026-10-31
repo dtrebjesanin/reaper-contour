@@ -641,7 +641,7 @@ end)
 h.test("palette order and ids", function()
   local ids = {}
   for _, p in ipairs(theme.PALETTES) do ids[#ids + 1] = p.id end
-  h.eq(table.concat(ids, ","), "auto,contour,danitreble,cassatt,kandinsky,tam,paquin,klimt")
+  h.eq(table.concat(ids, ","), "auto,contour,cassatt,kandinsky,tam,paquin,klimt")
   h.eq(theme.PALETTES[1].name, "Auto (REAPER theme)")
 end)
 
@@ -831,7 +831,7 @@ h.test("shell palette menu: popups balance at 360 and 700 px, button + popup sit
     with({ ImGui_MenuItem = function(_c, lbl, _sc, sel) names[#names + 1] = lbl; if sel then ticked[#ticked + 1] = lbl end
                                     return lbl == "Tam" end },
       function() stub.reset(); shell.draw(CTX, newState(), detEnv()) end)
-    h.eq(table.concat(names, "|"), "Auto (REAPER theme)|Contour|Dani Treble|Cassatt|Kandinsky|Tam|Paquin|Klimt")
+    h.eq(table.concat(names, "|"), "Auto (REAPER theme)|Contour|Cassatt|Kandinsky|Tam|Paquin|Klimt")
     h.eq(table.concat(ticked, "|"), "Klimt", "the active palette is ticked")
     h.eq(theme.paletteId(), "tam", "clicking Tam selects it")
     h.eq(stub.rec.extState.palette, "tam")
