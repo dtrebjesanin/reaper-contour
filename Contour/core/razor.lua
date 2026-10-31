@@ -7,7 +7,7 @@
 --   guid == "{...}"   -> that envelope's lane
 -- Spans are plain arrays {t0, t1} (index 1 and 2). Parsed triples carry named fields {t0, t1, guid}.
 -- GUID keys are stored WITHOUT the surrounding quotes, e.g. "{A}", everywhere (snapshot.env, order,
--- changedLanes, envSpans).
+-- changedLanes, envSpans), and UPPER-CASE.
 local M = {}
 
 local EPS_SPAN = 1e-9    -- spans shorter than this are empty; spans closer than this are touching
@@ -28,8 +28,9 @@ local function copySpans(spans)
 end
 
 --- Parse a P_RAZOREDITS string into { {t0=, t1=, guid=}, ... }. guid is "" for the item lane.
---- Accepts quoted ("{A}", "") and unquoted ({A}) GUIDs. Skips triples whose times do not parse or
---- that are zero-length (t1 - t0 <= 1e-9); an incomplete trailing triple is ignored.
+--- Accepts quoted ("{A}", "") and unquoted ({A}) GUIDs, upper-cased so they match however REAPER
+--- spells a GUID (context.lua upper-cases the envelope side the same way). Skips triples whose times do
+--- not parse or that are zero-length (t1 - t0 <= 1e-9); an incomplete trailing triple is ignored.
 function M.parse(s)
   local out = {}
   if type(s) ~= "string" or s == "" then return out end
@@ -38,7 +39,7 @@ function M.parse(s)
   for i = 1, #toks - 2, 3 do
     local t0, t1 = num(toks[i]), num(toks[i + 1])
     if t0 and t1 and t1 - t0 > EPS_SPAN then
-      out[#out + 1] = { t0 = t0, t1 = t1, guid = (toks[i + 2]:gsub('"', "")) }
+      out[#out + 1] = { t0 = t0, t1 = t1, guid = (toks[i + 2]:gsub('"', "")):upper() }
     end
   end
   return out

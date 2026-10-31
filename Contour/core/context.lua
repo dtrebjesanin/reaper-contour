@@ -118,11 +118,11 @@ local function razorApi()
   return true
 end
 
--- An envelope's GUID the way core/razor writes it: "{...}", no quotes. nil when REAPER gives none.
+-- An envelope's GUID the way core/razor writes it: "{...}", no quotes, upper case. nil when REAPER gives none.
 local function envGuid(env)
   local _, g = reaper.GetSetEnvelopeInfo_String(env, "GUID", "", false)
   if type(g) ~= "string" then return nil end
-  g = g:gsub('"', ""):match("^%s*(.-)%s*$")
+  g = g:gsub('"', ""):match("^%s*(.-)%s*$"):upper()
   return g ~= "" and g or nil
 end
 

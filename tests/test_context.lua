@@ -246,6 +246,26 @@ h.test("razor on the selected envelope's lane becomes the range", function()
   h.almost(d.t0, 0); h.almost(d.t1, 10)
 end)
 
+h.test("[M8] GUIDs compare case-insensitively, whichever side is lower case", function()
+  fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
+  S.tracks[1].razor = '2 4 "{a}"'                         -- razor string lower case, envelope GUID {A}
+  local d = rdet()
+  h.eq(d.rangeSource, "razor"); spansEq(d.ranges, { { 2, 4 } })
+  h.eq(#d.razorLanes, 1); h.eq(d.razorLanes[1].env, "ENV_A")
+  fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
+  S.tracks[1].envs[1].guid = "{a}"                        -- envelope GUID lower case, razor string {A}
+  S.tracks[1].razor = '2 4 "{A}"'
+  d = rdet()
+  h.eq(d.rangeSource, "razor"); spansEq(d.ranges, { { 2, 4 } })
+  h.eq(#d.razorLanes, 1); h.eq(d.razorLanes[1].env, "ENV_A")
+  -- and a switch to a lane whose two spellings differ
+  fresh(); project(); S.env = "ENV_A"
+  S.tracks[2].envs[1].guid = "{b}"
+  S.now = 0; rdet()
+  S.now = 0.2; S.tracks[2].razor = '1 2 "{B}"'; rdet()
+  S.now = 0.5; h.eq(rdet().razorSwitchTo, "ENV_B")
+end)
+
 h.test("no razor keeps the time selection as the range", function()
   fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
   local d = rdet()

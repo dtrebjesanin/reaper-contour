@@ -32,6 +32,17 @@ h.test("parse accepts an unquoted GUID", function()
   h.almost(out[1].t0, 1); h.almost(out[1].t1, 2)
 end)
 
+h.test("parse upper-cases a GUID so it matches however REAPER spells it [M8]", function()
+  local out = razor.parse('1 2 "{a1b2c3d4-00ef-4abc-9def-0123456789ab}" 3 4 {a}')
+  h.eq(out[1].guid, "{A1B2C3D4-00EF-4ABC-9DEF-0123456789AB}")
+  h.eq(out[2].guid, "{A}")
+  -- the item lane stays the empty string
+  h.eq(razor.parse('1 2 ""')[1].guid, "")
+  -- a lower-case and an upper-case spelling are one lane in a snapshot
+  local s = razor.snapshot({ { track = "T1", raw = '1 2 "{a}" 2 3 "{A}"' } })
+  h.eq(#s.order, 1); eqSpans(razor.envSpans(s, "{A}"), { { 1, 3 } })
+end)
+
 h.test("parse of empty or nil input is an empty list", function()
   h.eq(#razor.parse(''), 0)
   h.eq(#razor.parse(nil), 0)
