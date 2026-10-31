@@ -8,6 +8,7 @@
 - A new pure module `core/razor.lua` parses `P_RAZOREDITS`, merges and clamps spans, diffs snapshots and settles drags.
 - `core/context.lua` reads the razor state, at most every 100 ms, and adds `ranges` to the detected descriptor.
 - `ui/common.spansFor` is the ONE place that turns a descriptor into a list of spans.
+- The razor-versus-time-selection decision is made in `context.addRanges`. The later "Razor ⇄ Time selection" toggle belongs there. It has to reach the overlay script through ExtState.
 - Generate and Reduce loop over that list inside one Undo block.
 - The shell draws the range text and the chooser.
 
@@ -24,7 +25,7 @@
 - Contour writes only to the target lane. It never writes to a lane that you did not target or pick.
 - Exact texts:
   - Range text: `Razor %.3f .. %.3f s`. For several areas: `Razor ×%d, %.3f .. %.3f s`.
-  - `Razor on 1 other lane` / `Razor on %d other lanes`. Chooser label: `Razor on %d lanes:`. Chooser placeholder: `choose a lane`.
+  - `Razor on 1 other lane`. Chooser label: `Razor on %d lanes:`. Chooser placeholder: `choose a lane`.
   - Range hint: `Make a time selection or a razor area (or switch Scope to Entire item).`
   - Outside hints: `The razor area is outside this automation item` and `The razor area is outside this item`.
   - Transform: `Transform needs one razor area on this lane`.
