@@ -936,6 +936,15 @@ local HINT_RANGE      = "Make a time selection or a razor area (or switch Scope 
 local HINT_OUTSIDE_AI = "The razor area is outside this automation item"
 local HINT_OUTSIDE_IT = "The razor area is outside this item"
 
+h.test("[M5] the razor texts live in ui.common and are byte-identical to what the panels pin", function()
+  h.eq(common.RANGE_HINT, HINT_RANGE)
+  h.eq(common.MSG_ONE_AREA, "Transform needs one razor area on this lane")
+  h.eq(common.razorOutsideText({ target = "ai" }), HINT_OUTSIDE_AI)
+  h.eq(common.razorOutsideText({ target = "envelope" }), HINT_OUTSIDE_IT)
+  h.eq(common.razorOutsideText({}), HINT_OUTSIDE_IT)
+  h.eq(common.razorOutsideText(nil), HINT_OUTSIDE_IT, "nil-safe")
+end)
+
 local function razor(det, ranges)
   det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "razor", ranges, #ranges > 0, false
   return det

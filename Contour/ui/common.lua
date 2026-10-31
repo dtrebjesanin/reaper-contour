@@ -76,6 +76,19 @@ function M.hasRange(detected)
   return detected.hasTimeSel and true or false
 end
 
+-- The razor-area texts, in ONE place: Generate, Reduce, the context line, the overlay and the Transform panel
+-- all say the same thing, byte for byte (the tests pin them).
+-- RANGE_HINT: no range at all (no razor area on the lane, no time selection).
+M.RANGE_HINT = "Make a time selection or a razor area (or switch Scope to Entire item)."
+-- MSG_ONE_AREA: Transform has one box, so the lane's razor areas must be exactly one.
+M.MSG_ONE_AREA = "Transform needs one razor area on this lane"
+-- A razor area that lies outside the target (an automation item, or a take envelope's item) is NOT "no range":
+-- it never falls back to the time selection, and says so.
+function M.razorOutsideText(detected)
+  if detected and detected.target == "ai" then return "The razor area is outside this automation item" end
+  return "The razor area is outside this item"
+end
+
 -- Fader polish, drawn OVER the just-drawn slider (call IMMEDIATELY after it):
 --   * a translucent accent FILL from the default notch to the current value — the fader reads as
 --     "deviation from default" (bipolar faders fill from their centre, unipolar from their zero);

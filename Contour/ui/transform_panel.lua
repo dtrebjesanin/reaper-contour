@@ -2,6 +2,7 @@
 -- owns the shaping controls (Curve / Power-Sine / Symmetrical) and the live readout, not this panel.
 local M = {}
 local theme = require("ui.theme")
+local common = require("ui.common")
 M.scope = "points"  -- "points" | "timesel" — which region Launch hands to the tool
 
 -- Resolve the contour_transform action's command id so Launch can fire it via Main_OnCommand — which works
@@ -25,9 +26,7 @@ end
 -- Shown (and Launch disabled) when the Time selection scope would take several razor areas of the target lane:
 -- the overlay has one box, so it needs one span. Same text as ui/overlay.lua's refusal. The Selected points
 -- scope never asks for a razor area, so it never warns and Launch works (if the overlay later falls back to
--- the time-selection scope it refuses on its own).
-local MSG_ONE_AREA = "Transform needs one razor area on this lane"
-
+-- the time-selection scope it refuses on its own). The text lives in ui/common.lua.
 function M.draw(ctx, state, detected)
   local severalAreas = detected ~= nil and detected.rangeSource == "razor"
                         and type(detected.ranges) == "table" and #detected.ranges > 1
@@ -43,7 +42,7 @@ function M.draw(ctx, state, detected)
   if rTS  then M.scope = "timesel" end
   local manyAreas = severalAreas and M.scope == "timesel"   -- after the radio click: this frame's scope
 
-  if manyAreas then reaper.ImGui_TextColored(ctx, theme.C.warn, MSG_ONE_AREA) end
+  if manyAreas then reaper.ImGui_TextColored(ctx, theme.C.warn, common.MSG_ONE_AREA) end
 
   -- Launch: disabled while the Time selection scope has several razor areas to take. A disabled button
   -- reports no click, but the click is ignored in code too, so nothing reaches ExtState however the button

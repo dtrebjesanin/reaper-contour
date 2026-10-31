@@ -12,6 +12,7 @@ local generate        = require("ui.generate")
 local reduce          = require("ui.reduce")
 local transform_panel = require("ui.transform_panel")
 local theme           = require("ui.theme")
+local common          = require("ui.common")
 local context         = require("core.context")
 
 local OPS = {
@@ -116,12 +117,6 @@ local function razorRangeText(ranges)
   return ("Razor ×%d, %.3f .. %.3f s"):format(#ranges, ranges[1][1], ranges[#ranges][2])
 end
 
--- The razor areas on the target's lane all fall outside what Contour can write to (same texts as Generate).
-local function razorOutsideText(detected)
-  if detected.target == "ai" then return "The razor area is outside this automation item" end
-  return "The razor area is outside this item"
-end
-
 local CHOOSER_W = 170
 
 -- "Razor on N lanes: [lane v]": the razor areas cover two or more envelope lanes, so Contour cannot tell which
@@ -163,7 +158,7 @@ local function rangeText(detected)
   if detected.rangeSource == "razor" and detected.ranges and #detected.ranges >= 1 then
     return razorRangeText(detected.ranges), theme.C.textDim, true
   elseif detected.razorOutside then
-    return razorOutsideText(detected), theme.C.hint, true
+    return common.razorOutsideText(detected), theme.C.hint, true
   elseif detected.hasTimeSel then
     return ("%.3f .. %.3f s"):format(detected.t0, detected.t1), theme.C.textDim, false
   end

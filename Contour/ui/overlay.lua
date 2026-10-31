@@ -258,14 +258,6 @@ local function ccSetup(detected, lane)
            laneHeight = laneHeight, laneBottomOff = laneBottomOff }
 end
 
--- Texts for a razor area Transform cannot use: several areas on the lane (it has one box, so it needs one
--- span), or one that lies outside the item (it never falls back to the time selection, and says so).
-local MSG_ONE_AREA = "Transform needs one razor area on this lane"
-local function razorOutsideText(detected)
-  if detected.target == "ai" then return "The razor area is outside this automation item" end
-  return "The razor area is outside this item"
-end
-
 -- Read in-scope points (raw STORAGE values), tagged with their envelope index, for the explicit scope:
 -- "points" = the selected points (error if none); "timesel" = points inside the lane's one razor area, else
 -- inside the time selection (error if there is none, or the lane has several razor areas). Returns
@@ -307,8 +299,8 @@ local function readScope(detected, scope)
   if scope == "timesel" and detected.rangeSource == "razor" then
     -- The razor area is the range (it beats the time selection). One span only: more than one is refused.
     local ranges = detected.ranges or {}
-    if #ranges > 1 then return nil, MSG_ONE_AREA end
-    if #ranges == 0 then return nil, razorOutsideText(detected) end
+    if #ranges > 1 then return nil, common.MSG_ONE_AREA end
+    if #ranges == 0 then return nil, common.razorOutsideText(detected) end
     t0, t1 = ranges[1][1], ranges[1][2]
   elseif scope == "timesel" then
     if not detected.hasTimeSel then return nil, "No time selection — make one, or use Selected points" end
@@ -342,7 +334,7 @@ function M.start(ctx, detected)
   elseif handoff == "points" and pts then scope = "points"
   elseif pts then scope = "points"
   elseif hasRange then scope = "timesel"
-  elseif detected.rangeSource == "razor" then return false, razorOutsideText(detected)  -- areas exist, all outside
+  elseif detected.rangeSource == "razor" then return false, common.razorOutsideText(detected)  -- areas exist, all outside
   else return false, "Select some points, or make a time selection, then launch Transform" end
   local region, t0, t1, all
   if scope == "points" then region, t0, t1, all = pts, pt0, pt1, ptAll

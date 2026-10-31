@@ -567,13 +567,6 @@ local function laneKeyOf(detected)
   return tostring(d.env) .. ":" .. tostring(d.aiIndex) .. ":" .. tostring(d.take)
 end
 
--- The hint for a razor area that falls outside the target (an automation item, or a take envelope's item).
-local function razorOutsideHint(detected)
-  if detected and detected.target == "ai" then return "The razor area is outside this automation item" end
-  return "The razor area is outside this item"
-end
-local RANGE_HINT = "Make a time selection or a razor area (or switch Scope to Entire item)."
-
 -- Whether a live write can run right now (CC target + a time selection + valid CC#
 -- + a REAL shape selected). When shape == "none" (the default, v2.1 U1) we generate
 -- and write NOTHING — this is the explicit no-op gate that stops auto-generation on
@@ -1200,9 +1193,9 @@ function M.drawFooter(ctx, state, detected)
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Select a MIDI CC lane, a track envelope, or an automation item.")
   elseif g.scope == common.SCOPE_TIMESEL and detected.razorOutside then
     -- The razor area on this lane lies outside the item: no range, and never a fallback to the time selection.
-    reaper.ImGui_TextColored(ctx, theme.C.hint, razorOutsideHint(detected))
+    reaper.ImGui_TextColored(ctx, theme.C.hint, common.razorOutsideText(detected))
   elseif g.scope == common.SCOPE_TIMESEL and not common.hasRange(detected) then
-    reaper.ImGui_TextColored(ctx, theme.C.hint, RANGE_HINT)
+    reaper.ImGui_TextColored(ctx, theme.C.hint, common.RANGE_HINT)
   elseif currentShapeId(g) == "none" then
     -- v2.1 U1: the default None shape is a no-op; prompt the user to choose a shape.
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Pick a shape to generate")
@@ -1340,7 +1333,7 @@ function M.run(state, detected, g)
   end
   local isTrackEnv = tk == "envelope" and not (detected.details and detected.details.take)
   if (g.scope == common.SCOPE_TIMESEL or isTrackEnv) and not common.hasRange(detected) then
-    fail(detected.razorOutside and razorOutsideHint(detected) or "Make a time selection or a razor area") return
+    fail(detected.razorOutside and common.razorOutsideText(detected) or "Make a time selection or a razor area") return
   end
   if tk == "cc" and (g.ccNum < 0 or g.ccNum > 127) then fail("Set a valid CC# (0-127)") return end
   -- Defense-in-depth (v2.1 U1): the UI button is gated by canGenerate, but M.run is public

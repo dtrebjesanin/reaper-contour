@@ -25,14 +25,6 @@ local theme  = require("ui.theme")
 
 local SCOPE_TIMESEL, SCOPE_ENTIRE, SCOPE_SELECTED = 0, 1, 2
 
--- Hint texts for a missing range. A razor area that lies outside the target (an automation item, or a take
--- envelope's item) is NOT "no range": it never falls back to the time selection, and says so.
-local RANGE_HINT = "Make a time selection or a razor area (or switch Scope to Entire item)."
-local function razorOutsideHint(detected)
-  if detected and detected.target == "ai" then return "The razor area is outside this automation item" end
-  return "The razor area is outside this item"
-end
-
 -- Reduction slider (0..100 %) -> RDP tolerance as a fraction of the value range (span-invariant; see
 -- core/reduce). Quadratic for fine control at the low end: 100% -> 0.5, 50% -> 0.125, 10% -> ~0.005.
 local MAX_AMOUNT = 0.5
@@ -422,9 +414,9 @@ function M.draw(ctx, state, detected)
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Select points in the editor, then raise Reduction.")
   elseif g.scope == SCOPE_TIMESEL and detected.razorOutside then
     -- The razor area on this lane lies outside the item: no range, and never a fallback to the time selection.
-    reaper.ImGui_TextColored(ctx, theme.C.hint, razorOutsideHint(detected))
+    reaper.ImGui_TextColored(ctx, theme.C.hint, common.razorOutsideText(detected))
   elseif g.scope == SCOPE_TIMESEL and not common.hasRange(detected) then
-    reaper.ImGui_TextColored(ctx, theme.C.hint, RANGE_HINT)
+    reaper.ImGui_TextColored(ctx, theme.C.hint, common.RANGE_HINT)
   elseif g.amount == 0 then
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Raise Reduction to thin points")
   end
@@ -482,7 +474,7 @@ function M.run(state, detected, g)
   local function ok(m)   g.status = m; g.statusErr = false end
 
   if not readyFor(detected, g) then
-    if detected and detected.razorOutside then fail(razorOutsideHint(detected)) return end
+    if detected and detected.razorOutside then fail(common.razorOutsideText(detected)) return end
     fail("Select a CC lane / envelope / automation item (and a time selection or a razor area)") return
   end
   local okB, bErr = ensureBaseline(detected, g, false)
