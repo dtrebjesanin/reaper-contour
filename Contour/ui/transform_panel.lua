@@ -22,13 +22,15 @@ local function resolveCmd()
   return reaper.NamedCommandLookup("_Contour_Transform")
 end
 
--- Shown (and Launch disabled) when the target lane has several razor areas: the overlay has one box, so it
--- needs one span. Same text as ui/overlay.lua's refusal.
+-- Shown (and Launch disabled) when the Time selection scope would take several razor areas of the target lane:
+-- the overlay has one box, so it needs one span. Same text as ui/overlay.lua's refusal. The Selected points
+-- scope never asks for a razor area, so it never warns and Launch works (if the overlay later falls back to
+-- the time-selection scope it refuses on its own).
 local MSG_ONE_AREA = "Transform needs one razor area on this lane"
 
 function M.draw(ctx, state, detected)
-  local manyAreas = detected ~= nil and detected.rangeSource == "razor"
-                    and type(detected.ranges) == "table" and #detected.ranges > 1
+  local severalAreas = detected ~= nil and detected.rangeSource == "razor"
+                        and type(detected.ranges) == "table" and #detected.ranges > 1
   theme.sectionHeader(ctx, "Transform (mouse overlay)")
   reaper.ImGui_TextColored(ctx, theme.C.hint, "Pick a scope, then Launch — shaping controls are in the tool.")
   reaper.ImGui_Separator(ctx)
@@ -39,11 +41,13 @@ function M.draw(ctx, state, detected)
   local rTS  = reaper.ImGui_RadioButton(ctx, "Time selection##tr_ts", M.scope == "timesel")
   if rPts then M.scope = "points" end
   if rTS  then M.scope = "timesel" end
+  local manyAreas = severalAreas and M.scope == "timesel"   -- after the radio click: this frame's scope
 
   if manyAreas then reaper.ImGui_TextColored(ctx, theme.C.warn, MSG_ONE_AREA) end
 
-  -- Launch: disabled while the lane has several razor areas. A disabled button reports no click, but the
-  -- click is ignored in code too, so nothing reaches ExtState however the button was drawn.
+  -- Launch: disabled while the Time selection scope has several razor areas to take. A disabled button
+  -- reports no click, but the click is ignored in code too, so nothing reaches ExtState however the button
+  -- was drawn.
   local function launch()
     if theme.accentButton(ctx, "Launch Transform##tr_launch") and not manyAreas then
       reaper.SetExtState("Contour", "tr_scope", M.scope, false)  -- one-time scope handoff

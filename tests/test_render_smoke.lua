@@ -1682,10 +1682,13 @@ h.test("panel message and disabled launch", function()
   h.eq(#begins, 1); h.eq(begins[1], true, "Launch is disabled")
   h.eq(ends, 1, "BeginDisabled is closed")
   h.eq(stub.rec.extState.tr_scope, nil, "a click on the disabled Launch writes nothing")
-  -- the same with the Selected points scope: the message belongs to the lane, not to the scope
-  warns = trPanelFrame(razor(detAI(), { { 0, 1 }, { 2, 3 }, { 5, 6 } }), "points")
-  h.eq(warns[1], MSG_ONE_AREA)
-  h.eq(stub.rec.extState.tr_scope, nil)
+  -- [R1] the Selected points scope never asks for a razor area: no message, Launch works. (The overlay itself
+  -- refuses safely when it falls back to the time-selection scope.)
+  warns, begins, ends = trPanelFrame(razor(detAI(), { { 0, 1 }, { 2, 3 }, { 5, 6 } }), "points")
+  h.eq(#warns, 0, "Selected points: no warning (" .. table.concat(warns, "|") .. ")")
+  h.eq(#begins, 1); h.eq(begins[1], false, "Selected points: Launch is enabled")
+  h.eq(ends, 1, "BeginDisabled is closed")
+  h.eq(stub.rec.extState.tr_scope, "points", "the click hands the points scope to the tool")
 end)
 
 h.test("panel: one razor area, a time selection, or no descriptor keeps Launch enabled", function()
@@ -1705,6 +1708,7 @@ h.test("panel: one razor area, a time selection, or no descriptor keeps Launch e
   end
   -- shell hands its descriptor on to the panel (the body is the Transform panel on the Transform tab)
   stub.reset()
+  transform_panel.scope = "timesel"
   local st = newState(); st.op = "transform"
   local shown = {}
   with({ ImGui_TextColored = function(_c, col, s) if col == theme.C.warn then shown[#shown + 1] = s end end },
