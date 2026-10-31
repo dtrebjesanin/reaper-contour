@@ -56,9 +56,12 @@ function M.draw(ctx, state, detected)
     end
   end
   if reaper.ImGui_BeginDisabled then
+    -- EndDisabled must follow every BeginDisabled, so a throw inside launch() cannot leave the panel greyed
+    -- out (it is re-raised afterwards, and contour.lua still reports it).
     reaper.ImGui_BeginDisabled(ctx, manyAreas)
-    launch()
+    local ok, err = pcall(launch)
     reaper.ImGui_EndDisabled(ctx)
+    if not ok then error(err, 0) end
   elseif not manyAreas then
     launch()  -- an older ReaImGui cannot grey the button out, so it is simply not drawn
   end

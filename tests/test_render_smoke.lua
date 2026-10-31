@@ -1700,6 +1700,20 @@ h.test("panel message and disabled launch", function()
   h.eq(stub.rec.extState.tr_scope, "points", "the click hands the points scope to the tool")
 end)
 
+h.test("[M6] a throw while Launch is drawn still closes BeginDisabled, then re-raises", function()
+  stub.reset()
+  transform_panel.scope, transform_panel.status = "timesel", nil
+  local begins, ends = 0, 0
+  local ok, err
+  with({
+    ImGui_Button = function() error("launch boom") end,
+    ImGui_BeginDisabled = function() begins = begins + 1 end,
+    ImGui_EndDisabled = function() ends = ends + 1 end,
+  }, function() ok, err = pcall(transform_panel.draw, CTX, newState(), detEnv()) end)
+  h.truthy(not ok and tostring(err):find("launch boom", 1, true), "the error is re-raised: " .. tostring(err))
+  h.eq(begins, 1); h.eq(ends, 1, "EndDisabled ran although Launch threw")
+end)
+
 h.test("panel: one razor area, a time selection, or no descriptor keeps Launch enabled", function()
   local cases = {
     { "one razor area",   razor(detEnv(), { { 2, 4 } }) },
