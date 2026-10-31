@@ -12,6 +12,7 @@ local generate        = require("ui.generate")
 local reduce          = require("ui.reduce")
 local transform_panel = require("ui.transform_panel")
 local theme           = require("ui.theme")
+local context         = require("core.context")
 
 local OPS = {
   { id = "generate",  label = "Generate" },
@@ -97,38 +98,131 @@ local function targetTabs(ctx, state)
   state.forceTarget = nil   -- one-frame pulse
 end
 
--- Row 3: ONE context line — what was detected, the time selection (dim) or the no-selection hint, and
--- the Follow toggle pinned to the right edge of the same line.
+-- Select the envelope `env` in REAPER (the arrange view takes focus) and mark the arrange as the surface the
+-- user engaged, so detection lands on it even when it is already the selected envelope while a MIDI CC
+-- selection is active. The ONE place that changes the target lane: the chooser pick and the settled-drag switch
+-- both come here.
+local function selectLane(env)
+  if reaper.SetCursorContext then reaper.SetCursorContext(2, env) end
+  context.engageArrange()
+end
+
+-- The range text for razor areas on the target's lane: "Razor 1.200 .. 1.950 s" for one area, and for several
+-- "Razor ×2, 1.000 .. 6.000 s" (the count, then the first start .. the last end).
+local function razorRangeText(ranges)
+  if #ranges == 1 then return ("Razor %.3f .. %.3f s"):format(ranges[1][1], ranges[1][2]) end
+  return ("Razor ×%d, %.3f .. %.3f s"):format(#ranges, ranges[1][1], ranges[#ranges][2])
+end
+
+-- The razor areas on the target's lane all fall outside what Contour can write to (same texts as Generate).
+local function razorOutsideText(detected)
+  if detected.target == "ai" then return "The razor area is outside this automation item" end
+  return "The razor area is outside this item"
+end
+
+local CHOOSER_W = 170
+
+-- "Razor on N lanes: [lane v]": the razor areas cover two or more envelope lanes, so Contour cannot tell which
+-- one is meant. The preview names the target when it is one of them, else "choose a lane" (nothing is
+-- written to any covered lane until one is picked). Returns the envelope picked this frame, or nil; the caller
+-- applies it AFTER EndCombo. EndCombo only follows a BeginCombo that returned true; the entries run in a
+-- pcall so a throw cannot leave the combo open (re-raised, as with the palette menu).
+local function laneChooser(ctx, detected, lanes)
+  local targetEnv = detected.details and detected.details.env
+  local preview = "choose a lane"
+  for _, lane in ipairs(lanes) do
+    if lane.env == targetEnv then preview = lane.label; break end
+  end
+
+  reaper.ImGui_AlignTextToFramePadding(ctx)
+  reaper.ImGui_TextColored(ctx, theme.C.textDim, ("Razor on %d lanes:"):format(#lanes))
+  reaper.ImGui_SameLine(ctx)
+  reaper.ImGui_SetNextItemWidth(ctx, CHOOSER_W)
+  local picked
+  if reaper.ImGui_BeginCombo(ctx, "##razor_lane", preview) then
+    local ok, err = pcall(function()
+      for i, lane in ipairs(lanes) do
+        -- Two tracks can share a name, so the entries need their own ID; the label stays as it reads.
+        reaper.ImGui_PushID(ctx, i)
+        local clicked = reaper.ImGui_Selectable(ctx, lane.label, lane.env == targetEnv)
+        reaper.ImGui_PopID(ctx)
+        if clicked then picked = lane.env end
+      end
+    end)
+    reaper.ImGui_EndCombo(ctx)
+    if not ok then error(err, 0) end
+  end
+  return picked
+end
+
+-- What the context line says about the range Contour works on, and in which colour: the razor areas on the
+-- target's lane (dim), the hint when they all fall outside, else the time selection or the no-selection hint.
+local function rangeText(detected)
+  if detected.rangeSource == "razor" and detected.ranges and #detected.ranges >= 1 then
+    return razorRangeText(detected.ranges), theme.C.textDim
+  elseif detected.razorOutside then
+    return razorOutsideText(detected), theme.C.hint
+  elseif detected.hasTimeSel then
+    return ("%.3f .. %.3f s"):format(detected.t0, detected.t1), theme.C.textDim
+  end
+  return "No time selection", theme.C.hint
+end
+
+-- Row 3: ONE context line — what was detected, the range Contour works on, and the Follow toggle pinned to the
+-- right edge of the same line. Two things can take a second line under it (a third when both do):
+--   * the range text, when label + range text + Follow do not fit on the line (the razor texts are wider than the
+--     time selection's; the outside hint alone is wider than the panel at 360 px). Follow stays on the first line;
+--   * the lane chooser (razor areas on two or more lanes) or the one-line note (one lane other than the target):
+--     it never shares the line with the range text, which already fills most of the 360 px.
 local function contextLine(ctx, state, detected)
   -- Measure BEFORE drawing: the row's left edge and the full width available to it give the right edge.
   local x0 = reaper.ImGui_GetCursorPosX and reaper.ImGui_GetCursorPosX(ctx)
   local availW = reaper.ImGui_GetContentRegionAvail and select(1, reaper.ImGui_GetContentRegionAvail(ctx))
+  local text, textCol = rangeText(detected)
 
-  reaper.ImGui_Text(ctx, detected.label)
-  reaper.ImGui_SameLine(ctx)
-  if detected.hasTimeSel then
-    reaper.ImGui_TextColored(ctx, theme.C.textDim, ("%.3f .. %.3f s"):format(detected.t0, detected.t1))
-  else
-    reaper.ImGui_TextColored(ctx, theme.C.hint, "No time selection")
+  -- The Follow checkbox's width (square + inner spacing + label), and whether the whole line fits. Without the
+  -- geometry calls the old behaviour stands: one line, plain SameLine.
+  local followW, wrapRange
+  if reaper.ImGui_CalcTextSize and reaper.ImGui_GetFrameHeight and type(availW) == "number" then
+    local boxH = reaper.ImGui_GetFrameHeight(ctx)
+    local followTextW = reaper.ImGui_CalcTextSize(ctx, "Follow")
+    if type(boxH) == "number" and type(followTextW) == "number" then
+      local innerSpacing, itemSpacing = 6, 8   -- ItemInnerSpacing.x, ItemSpacing.x (ui/theme)
+      followW = boxH + innerSpacing + followTextW
+      local labelW = reaper.ImGui_CalcTextSize(ctx, detected.label)
+      local textW = reaper.ImGui_CalcTextSize(ctx, text)
+      wrapRange = type(labelW) == "number" and type(textW) == "number"
+        and labelW + itemSpacing + textW + itemSpacing + followW > availW
+    end
   end
 
-  -- Right-align the checkbox: content width minus the checkbox's own width (square + inner spacing + label).
-  -- Never left of where the text ended; if any geometry call is missing the plain SameLine is the fallback.
+  reaper.ImGui_Text(ctx, detected.label)
+  if not wrapRange then
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_TextColored(ctx, textCol, text)
+  end
+
+  -- Right-align the checkbox: content width minus the checkbox's own width. Never left of where the text
+  -- ended; if any geometry call is missing the plain SameLine is the fallback.
   reaper.ImGui_SameLine(ctx)
-  if reaper.ImGui_SetCursorPosX and reaper.ImGui_GetCursorPosX and reaper.ImGui_GetFrameHeight
-     and reaper.ImGui_CalcTextSize and type(x0) == "number" and type(availW) == "number" then
-    local boxH = reaper.ImGui_GetFrameHeight(ctx)
-    local textW = reaper.ImGui_CalcTextSize(ctx, "Follow")
-    if type(boxH) == "number" and type(textW) == "number" then
-      local innerSpacing = 6   -- ItemInnerSpacing.x (ui/theme)
-      local x = x0 + availW - (boxH + innerSpacing + textW)
-      local curX = reaper.ImGui_GetCursorPosX(ctx)
-      if type(curX) == "number" and x < curX then x = curX end
-      reaper.ImGui_SetCursorPosX(ctx, x)
-    end
+  if followW and reaper.ImGui_SetCursorPosX and reaper.ImGui_GetCursorPosX and type(x0) == "number" then
+    local x = x0 + availW - followW
+    local curX = reaper.ImGui_GetCursorPosX(ctx)
+    if type(curX) == "number" and x < curX then x = curX end
+    reaper.ImGui_SetCursorPosX(ctx, x)
   end
   local rv, follow = reaper.ImGui_Checkbox(ctx, "Follow##follow", state.follow)
   if rv then state.follow = follow end
+
+  if wrapRange then reaper.ImGui_TextColored(ctx, textCol, text) end
+
+  local lanes = detected.razorLanes
+  if lanes and #lanes >= 2 then
+    local picked = laneChooser(ctx, detected, lanes)
+    if picked then selectLane(picked) end
+  elseif lanes and #lanes == 1 and lanes[1].env ~= (detected.details and detected.details.env) then
+    reaper.ImGui_TextColored(ctx, theme.C.textDim, "Razor on 1 other lane")
+  end
 end
 
 -- Footer height guess for the very first Generate frame, before drawFooter has been measured: about two
@@ -149,6 +243,10 @@ end
 --   noWheel — true when scroll() drives the wheel itself, so the child must not also scroll with it.
 function M.draw(ctx, state, detected, opts)
   opts = opts or {}
+
+  -- A razor drag that settled on exactly one lane (context.detect reports it for ONE frame): select that lane
+  -- and detection picks it up on the next frame. With Follow off the target never moves by itself.
+  if state.follow and detected.razorSwitchTo then selectLane(detected.razorSwitchTo) end
 
   -- Edge-triggered follow: snap the tab to the detected target only when the detection changes,
   -- so manual tab clicks aren't yanked back every frame.

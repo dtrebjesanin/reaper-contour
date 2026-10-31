@@ -52,6 +52,8 @@ function M.reset()
     popupBegin = 0, popupEnd = 0,
     -- And tab bars: EndTabBar only follows a BeginTabBar that returned true (the stub always does).
     tabBarBegin = 0, tabBarEnd = 0,
+    -- And combos: EndCombo only follows a BeginCombo that returned true (the stub always does).
+    comboBegin = 0, comboEnd = 0,
     -- SetCursorContext(mode, env) calls, in order: each entry { mode, env, mode = mode, env = env }.
     cursorCtx = {},
   }
@@ -159,10 +161,11 @@ R.ImGui_Checkbox     = echo
 R.ImGui_Combo        = echo
 
 -- ---- Begin*/tab gating: return true so the conditional bodies run (max coverage) ------------------
--- End*/EndTabItem/EndCombo are no-ops via the catch-all; EndChild/EndTable/EndPopup/EndTabBar are COUNTED
+-- End*/EndTabItem are no-ops via the catch-all; EndChild/EndTable/EndPopup/EndTabBar/EndCombo are COUNTED
 -- (rec.*End) so tests can assert pairing.
 R.ImGui_Begin        = function() return true, true end   -- (visible, open)
-R.ImGui_BeginCombo   = function() return true end
+R.ImGui_BeginCombo   = function() M.rec.comboBegin = M.rec.comboBegin + 1; return true end
+R.ImGui_EndCombo     = function() M.rec.comboEnd = M.rec.comboEnd + 1 end
 R.ImGui_BeginTabBar  = function() M.rec.tabBarBegin = M.rec.tabBarBegin + 1; return true end
 R.ImGui_EndTabBar    = function() M.rec.tabBarEnd = M.rec.tabBarEnd + 1 end
 R.ImGui_BeginTabItem = function() return true end
