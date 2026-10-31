@@ -101,9 +101,11 @@ end
 -- Select the envelope `env` in REAPER (the arrange view takes focus) and mark the arrange as the surface the
 -- user engaged, so detection lands on it even when it is already the selected envelope while a MIDI CC
 -- selection is active. The ONE place that changes the target lane: the chooser pick and the settled-drag switch
--- both come here.
-local function selectLane(env)
-  if reaper.SetCursorContext then reaper.SetCursorContext(2, env) end
+-- both come here. When `env` already is the target's envelope nothing is re-selected: SetCursorContext(2, env)
+-- could drop an automation-item selection on it, and the arrange is engaged either way.
+local function selectLane(env, detected)
+  local current = detected and detected.details and detected.details.env
+  if reaper.SetCursorContext and env ~= current then reaper.SetCursorContext(2, env) end
   context.engageArrange()
 end
 
@@ -223,7 +225,7 @@ local function contextLine(ctx, state, detected)
   local lanes = detected.razorLanes
   if lanes and #lanes >= 2 then
     local picked = laneChooser(ctx, detected, lanes)
-    if picked then selectLane(picked) end
+    if picked then selectLane(picked, detected) end
   elseif lanes and #lanes == 1 and lanes[1].env ~= (detected.details and detected.details.env) then
     reaper.ImGui_TextColored(ctx, theme.C.textDim, "Razor on 1 other lane")
   end
@@ -250,7 +252,7 @@ function M.draw(ctx, state, detected, opts)
 
   -- A razor drag that settled on exactly one lane (context.detect reports it for ONE frame): select that lane
   -- and detection picks it up on the next frame. With Follow off the target never moves by itself.
-  if state.follow and detected.razorSwitchTo then selectLane(detected.razorSwitchTo) end
+  if state.follow and detected.razorSwitchTo then selectLane(detected.razorSwitchTo, detected) end
 
   -- Edge-triggered follow: snap the tab to the detected target only when the detection changes,
   -- so manual tab clicks aren't yanked back every frame.

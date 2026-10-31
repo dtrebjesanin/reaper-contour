@@ -1519,6 +1519,46 @@ h.test("the lane switch marks the arrange as engaged, like a chooser pick", func
   h.eq(engaged, 1, "engageArrange ran once")
 end)
 
+-- [F2] The target lane is already the selected envelope: SetCursorContext(2, env) would only risk dropping an
+-- automation-item selection on it, so it is skipped. engageArrange still runs (a MIDI CC selection may be active).
+local function countEngage(fn)
+  local engaged, saved = 0, context.engageArrange
+  context.engageArrange = function() engaged = engaged + 1 end
+  local ok, err = pcall(fn)
+  context.engageArrange = saved
+  h.truthy(ok, tostring(err))
+  return engaged
+end
+
+h.test("[F2] the settled-drag switch to the lane that is already the target does not re-select it", function()
+  local det = detEnv(); det.details.env = "ENV_B"; det.razorSwitchTo = "ENV_B"
+  local engaged = countEngage(function() stub.reset(); shell.draw(CTX, newState(), det) end)
+  h.eq(#stub.rec.cursorCtx, 0, "no SetCursorContext when the target already is that envelope")
+  h.eq(engaged, 1, "engageArrange still ran once")
+  -- an automation item selected on that envelope: the same, which is the point
+  det = detAI(); det.details.env = "ENV_B"; det.razorSwitchTo = "ENV_B"
+  engaged = countEngage(function() stub.reset(); shell.draw(CTX, newState(), det) end)
+  h.eq(#stub.rec.cursorCtx, 0, "automation item target: its envelope is not re-selected")
+  h.eq(engaged, 1)
+  -- another lane is still selected
+  det = detEnv(); det.details.env = "ENV_A"; det.razorSwitchTo = "ENV_B"
+  engaged = countEngage(function() stub.reset(); shell.draw(CTX, newState(), det) end)
+  h.eq(#stub.rec.cursorCtx, 1, "a different lane is selected"); h.eq(stub.rec.cursorCtx[1].env, "ENV_B")
+  h.eq(engaged, 1)
+end)
+
+h.test("[F2] a chooser pick of the lane that is already the target does not re-select it", function()
+  local det = razorDet(detEnv(), { { 1, 2 } }, lanes3()); det.details.env = "ENV_D"
+  local engaged = countEngage(function() headerFrame(newState(), det, { pick = "Drums: Volume" }) end)
+  h.eq(#stub.rec.cursorCtx, 0, "no SetCursorContext for the current target lane")
+  h.eq(engaged, 1, "engageArrange still ran once")
+  -- picking another lane still selects it
+  det = razorDet(detEnv(), { { 1, 2 } }, lanes3()); det.details.env = "ENV_D"
+  engaged = countEngage(function() headerFrame(newState(), det, { pick = "Pad: Volume" }) end)
+  h.eq(#stub.rec.cursorCtx, 1); h.eq(stub.rec.cursorCtx[1].env, "ENV_P")
+  h.eq(engaged, 1)
+end)
+
 -- ---- razor areas: Transform's "Time selection" scope takes the lane's one razor area ----------------------
 -- The stub's fixture points sit at t = 0, 2, 4 and are all selected, so these tests either hand the overlay
 -- the panel's "timesel" scope (ExtState tr_scope, consumed by start) or deselect the points first.
