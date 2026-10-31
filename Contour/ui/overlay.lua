@@ -27,10 +27,6 @@ local SAVED = {
     function(s) if s == "small" then return true elseif s == "full" then return false end end },
 }
 
-local ACCENT   = 0x2E8B9BFF
-local ACCENT_H = 0x53C9D6FF
-local BOXCOL   = 0x2E8B9BCC
-
 -- Forward declaration: bounds() is defined lower in the file but called from the draw/drag handlers
 -- ABOVE its definition. As a module-local it must be declared here first, else those earlier call
 -- sites resolve to a nil global (regression from demoting M._bounds to a local).
@@ -936,9 +932,9 @@ function M.frame(ctx)
   if reaper.ImGui_Begin(ctx, "##contour_overlay", true, flags) then
     local dl = reaper.ImGui_GetWindowDrawList(ctx)
     -- bounding box + handles
-    reaper.ImGui_DrawList_AddRect(dl, x0, yt, x1, yb, BOXCOL, 0, 0, 1.5)
+    reaper.ImGui_DrawList_AddRect(dl, x0, yt, x1, yb, theme.withAlpha(theme.C.accent, 0xCC), 0, 0, 1.5)
     for _, hnd in ipairs(handles) do
-      local c = OPCOL[hnd.op] or { ACCENT, ACCENT_H }
+      local c = OPCOL[hnd.op] or { theme.C.accent, theme.C.accentA }
       local col = (g.zone == hnd.id) and c[2] or c[1]
       if small then
         -- Small handles: an op-coloured dot with a dark rim, about a third of the full disc, no arrow
@@ -954,8 +950,8 @@ function M.frame(ctx)
       end
     end
     -- HUD panel background (drawn before the widgets, which append to the same draw list on top)
-    reaper.ImGui_DrawList_AddRectFilled(dl, hudX, hudY, hudX+HUDW, hudY+HUDH, 0x12242BF7, 6)
-    reaper.ImGui_DrawList_AddRect(dl, hudX, hudY, hudX+HUDW, hudY+HUDH, ACCENT, 6, 0, 1.5)
+    reaper.ImGui_DrawList_AddRectFilled(dl, hudX, hudY, hudX+HUDW, hudY+HUDH, theme.C.hudBg, 6)
+    reaper.ImGui_DrawList_AddRect(dl, hudX, hudY, hudX+HUDW, hudY+HUDH, theme.C.accent, 6, 0, 1.5)
     local p = M.params
     local PAD, RH = 11, 27
     -- Collapse / expand toggle (top-right corner). Collapsed = a slim strip with just the live status:
@@ -976,9 +972,9 @@ function M.frame(ctx)
       local bx1, by1 = reaper.ImGui_GetItemRectMax(ctx)
       local bcx, bcy = (bx0 + bx1) / 2, (by0 + by1) / 2
       local bdl = reaper.ImGui_GetWindowDrawList(ctx)
-      reaper.ImGui_DrawList_AddLine(bdl, bcx - 4, bcy, bcx + 4, bcy, 0xE3E8ECFF, 1.5)     -- minus bar
+      reaper.ImGui_DrawList_AddLine(bdl, bcx - 4, bcy, bcx + 4, bcy, theme.C.text, 1.5)     -- minus bar
       if g.hudCollapsed then
-        reaper.ImGui_DrawList_AddLine(bdl, bcx, bcy - 4, bcx, bcy + 4, 0xE3E8ECFF, 1.5)   -- plus upright
+        reaper.ImGui_DrawList_AddLine(bdl, bcx, bcy - 4, bcx, bcy + 4, theme.C.text, 1.5)   -- plus upright
       end
     end
     -- PIN toggle (save/unpin the position as the persistent default home), left of the collapse
@@ -996,9 +992,9 @@ function M.frame(ctx)
       local px1, py1 = reaper.ImGui_GetItemRectMax(ctx)
       local pcx, pcy = (px0 + px1) / 2, (py0 + py1) / 2
       local pdl = reaper.ImGui_GetWindowDrawList(ctx)
-      if g.hudHome then reaper.ImGui_DrawList_AddCircleFilled(pdl, pcx, pcy - 2, 3.5, 0xE3E8ECFF)
-      else              reaper.ImGui_DrawList_AddCircle(pdl, pcx, pcy - 2, 3.5, 0xE3E8ECFF, 0, 1.5) end
-      reaper.ImGui_DrawList_AddLine(pdl, pcx, pcy + 1, pcx, pcy + 6, 0xE3E8ECFF, 1.5)
+      if g.hudHome then reaper.ImGui_DrawList_AddCircleFilled(pdl, pcx, pcy - 2, 3.5, theme.C.text)
+      else              reaper.ImGui_DrawList_AddCircle(pdl, pcx, pcy - 2, 3.5, theme.C.text, 0, 1.5) end
+      reaper.ImGui_DrawList_AddLine(pdl, pcx, pcy + 1, pcx, pcy + 6, theme.C.text, 1.5)
     end
     if g.hudCollapsed then
       reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hudY + 6)
@@ -1040,10 +1036,10 @@ function M.frame(ctx)
       -- Gesture hints, one per short line (pre-broken; the full single line won't fit, and ImGui wrap takes
       -- window-local coords our screen-pos layout doesn't use). Each line sits 17px below the previous.
       local hy = hudY + PAD + 6 * RH
-      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy);      reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Mouse Scroll: Curve")
-      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 17); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Middle-click: Power/Sine")
-      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 34); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Right-click: Symmetrical")
-      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 51); reaper.ImGui_TextColored(ctx, 0xC0A040FF, "Shift + centre: move (one axis)")
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy);      reaper.ImGui_TextColored(ctx, theme.C.hint, "Mouse Scroll: Curve")
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 17); reaper.ImGui_TextColored(ctx, theme.C.hint, "Middle-click: Power/Sine")
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 34); reaper.ImGui_TextColored(ctx, theme.C.hint, "Right-click: Symmetrical")
+      reaper.ImGui_SetCursorScreenPos(ctx, hudX + PAD, hy + 51); reaper.ImGui_TextColored(ctx, theme.C.hint, "Shift + centre: move (one axis)")
       reaper.ImGui_PopItemWidth(ctx)
     end
     reaper.ImGui_End(ctx)   -- only after a Begin that returned true (ReaImGui's rule, as in contour.lua)

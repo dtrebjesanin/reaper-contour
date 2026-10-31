@@ -5,15 +5,13 @@
 -- model) so the pad matches the rendered envelope/CC. Pure-ish: no ExtState; caller owns persistence.
 local M = {}
 local cs = require("core.customshape")
+local theme = require("ui.theme")
 local abs, min, max, floor = math.abs, math.min, math.max, math.floor
 
-local GRID = 0x3A434BFF
-local AXIS = 0x55636EFF
-local CURVE = 0x48C6D4FF
-local GHOST = 0xE3B15399   -- dim amber: the "result after modifiers" ghost, drawn behind the teal curve
-local PT = 0x9FE9F1FF
+-- The pad's grid / axis / curve / point colours come from the palette (theme.C.pad*), read when drawing.
+-- These two stay fixed: the ghost's amber means "result after modifiers", and the hot point is white.
+local GHOST = 0xE3B15399   -- dim amber: the "result after modifiers" ghost, drawn behind the curve
 local PTHOT = 0xFFFFFFFF
-local BG = 0x10151AFF
 
 local drag = { idx = nil, seg = nil }   -- which point or segment is being dragged (module-level, single pad)
 
@@ -107,10 +105,10 @@ function M.draw(ctx, points, opts)
   local changed = false
 
   -- background + grid (gridX vertical / gridY horizontal divisions; y=0 center drawn last, emphasized)
-  reaper.ImGui_DrawList_AddRectFilled(dl, x0, y0, x0 + w, y0 + hgt, BG, 4)
-  for i = 0, gridX do local gx = x0 + i / gridX * w; reaper.ImGui_DrawList_AddLine(dl, gx, y0, gx, y0 + hgt, GRID, 1) end
-  for j = 0, gridY do local gy = y0 + j / gridY * hgt; reaper.ImGui_DrawList_AddLine(dl, x0, gy, x0 + w, gy, GRID, 1) end
-  reaper.ImGui_DrawList_AddLine(dl, x0, y0 + hgt / 2, x0 + w, y0 + hgt / 2, AXIS, 1)   -- center (y=0)
+  reaper.ImGui_DrawList_AddRectFilled(dl, x0, y0, x0 + w, y0 + hgt, theme.C.padBg, 4)
+  for i = 0, gridX do local gx = x0 + i / gridX * w; reaper.ImGui_DrawList_AddLine(dl, gx, y0, gx, y0 + hgt, theme.C.padGrid, 1) end
+  for j = 0, gridY do local gy = y0 + j / gridY * hgt; reaper.ImGui_DrawList_AddLine(dl, x0, gy, x0 + w, gy, theme.C.padGrid, 1) end
+  reaper.ImGui_DrawList_AddLine(dl, x0, y0 + hgt / 2, x0 + w, y0 + hgt / 2, theme.C.padAxis, 1)   -- center (y=0)
 
   -- pointer hit-test (nearest point)
   local HR = 9
@@ -187,11 +185,11 @@ function M.draw(ctx, points, opts)
   -- renderer so an eased/bezier ghost tessellates a real curve instead of straight-lining (a sparse
   -- sine has shape-2 segments; connecting its 3 points straight would look like a triangle).
   if opts.overlay and #opts.overlay >= 2 then drawCurve(dl, opts.overlay, x0, y0, w, hgt, GHOST, 2) end
-  drawCurve(dl, points, x0, y0, w, hgt, CURVE, 2)
+  drawCurve(dl, points, x0, y0, w, hgt, theme.C.padCurve, 2)
   -- draw point handles
   for i, p in ipairs(points) do
     local sx, sy = toScreen(p.x, p.y, x0, y0, w, hgt)
-    reaper.ImGui_DrawList_AddCircleFilled(dl, sx, sy, (i == hotPt) and 5 or 3.5, (i == hotPt) and PTHOT or PT)
+    reaper.ImGui_DrawList_AddCircleFilled(dl, sx, sy, (i == hotPt) and 5 or 3.5, (i == hotPt) and PTHOT or theme.C.padPoint)
   end
 
   return changed

@@ -36,6 +36,10 @@ M.PPQ = 100     -- ppq per second (MIDI_GetPPQPosFromProjTime scale below)
 -- Content-region width ImGui_GetContentRegionAvail reports (the panels pick one vs two columns from it).
 -- reset() deliberately does NOT touch it: a test that changes it sets it and restores it (360) itself.
 M.AVAIL_W = 360
+-- The REAPER theme GetThemeColor reads (key -> native colour int, 0x00BBGGRR) and the clock time_precise
+-- reports. reset() deliberately does NOT touch either: a test that changes them sets and restores them.
+M.themeColors = {}
+M.now = 0
 
 function M.reset()
   M.rec = {
@@ -44,6 +48,10 @@ function M.reset()
     -- Begin/End pairing counters: every BeginChild needs an EndChild whatever it returns; EndTable only
     -- follows a BeginTable that returned true (the stub always does). Tests assert begin == end.
     childBegin = 0, childEnd = 0, tableBegin = 0, tableEnd = 0,
+    -- Same for popups: EndPopup only follows a BeginPopup that returned true (the stub always does).
+    popupBegin = 0, popupEnd = 0,
+    -- And tab bars: EndTabBar only follows a BeginTabBar that returned true (the stub always does).
+    tabBarBegin = 0, tabBarEnd = 0,
   }
   M.envPoints = {
     { time = 0.0, value = -0.5, shape = 0, tension = 0, sel = true },
@@ -125,17 +133,30 @@ R.ImGui_Checkbox     = echo
 R.ImGui_Combo        = echo
 
 -- ---- Begin*/tab gating: return true so the conditional bodies run (max coverage) ------------------
--- End*/EndTabItem/EndCombo are no-ops via the catch-all; EndChild/EndTable are COUNTED (rec.childEnd/tableEnd) so tests can assert pairing.
+-- End*/EndTabItem/EndCombo are no-ops via the catch-all; EndChild/EndTable/EndPopup/EndTabBar are COUNTED
+-- (rec.*End) so tests can assert pairing.
 R.ImGui_Begin        = function() return true, true end   -- (visible, open)
 R.ImGui_BeginCombo   = function() return true end
-R.ImGui_BeginTabBar  = function() return true end
+R.ImGui_BeginTabBar  = function() M.rec.tabBarBegin = M.rec.tabBarBegin + 1; return true end
+R.ImGui_EndTabBar    = function() M.rec.tabBarEnd = M.rec.tabBarEnd + 1 end
 R.ImGui_BeginTabItem = function() return true end
 R.ImGui_BeginChild   = function() M.rec.childBegin = M.rec.childBegin + 1; return true end
 R.ImGui_EndChild     = function() M.rec.childEnd = M.rec.childEnd + 1 end
 R.ImGui_BeginTable   = function() M.rec.tableBegin = M.rec.tableBegin + 1; return true end
 R.ImGui_EndTable     = function() M.rec.tableEnd = M.rec.tableEnd + 1 end
-R.ImGui_BeginPopup   = function() return true end
+R.ImGui_BeginPopup   = function() M.rec.popupBegin = M.rec.popupBegin + 1; return true end
+R.ImGui_EndPopup     = function() M.rec.popupEnd = M.rec.popupEnd + 1 end
 R.ImGui_BeginPopupModal = function() return true end
+-- Pressed-style widgets: nothing is clicked unless a test overrides them.
+R.ImGui_TabItemButton = function() return false end
+R.ImGui_MenuItem      = function() return false end
+
+-- ---- REAPER theme + clock (ui/theme Auto palette and its once-a-second refresh) ---------------------
+-- GetThemeColor reads M.themeColors and reports a missing key as -1, like REAPER. ColorFromNative is the
+-- Windows order: native = 0x00BBGGRR.
+R.GetThemeColor   = function(key) local v = M.themeColors[key]; if v == nil then return -1 end return v end
+R.ColorFromNative = function(n) return n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF end
+R.time_precise    = function() return M.now end
 
 -- ---- ExtState: return "" so preset/store decoders see "nothing saved" cleanly --------------------
 R.GetExtState = function(_sec, key) return M.rec.extState[key] or "" end

@@ -3,6 +3,7 @@
 -- Pure ReaImGui; no engine logic. (Generate predates this module and still carries its own copies;
 -- new panels use these so the behavior stays identical without re-duplicating it further.)
 local M = {}
+local theme = require("ui.theme")
 
 -- Scope: write across the Time selection, or the target's Entire item/envelope.
 M.SCOPE_MODES = { "Time selection", "Entire item" }
@@ -64,7 +65,8 @@ local function drawFaderPolish(ctx, v, vmin, vmax, vdef, hovered, disp)
   local frameW = reaper.ImGui_CalcItemWidth(ctx)
   if not frameW or frameW <= 0 then return end
   local dl = reaper.ImGui_GetWindowDrawList(ctx)
-  local gs, pad = 14, 2                      -- GrabMinSize + ImGui's internal grab padding
+  local C = theme.C                          -- the live palette, read per draw
+  local gs, pad = 14, 2                     -- GrabMinSize + ImGui's internal grab padding
   local usable = frameW - pad * 2 - gs
   if usable <= 0 then return end
   local function xFor(val)
@@ -75,12 +77,12 @@ local function drawFaderPolish(ctx, v, vmin, vmax, vdef, hovered, disp)
   local xv, xd = xFor(tonumber(v) or vmin), xFor(vdef)
   if math.abs(xv - xd) > 0.5 then            -- deviation fill: default -> current value
     local a, b = math.min(xv, xd), math.max(xv, xd)
-    reaper.ImGui_DrawList_AddRectFilled(dl, a, y0 + 2, b, y1 - 2, 0x2E8B9B4D, 4)
+    reaper.ImGui_DrawList_AddRectFilled(dl, a, y0 + 2, b, y1 - 2, C.faderFill, 4)
   end
   -- default DETENT marker: two small inward-pointing wedges at the frame's top/bottom edges — the
   -- classic mixer centre-detent mark. Unlike the old full-height line it never slices through the
-  -- value text; teal-bright while hovered (it's the double-click reset target).
-  local mcol = hovered and 0x53C9D6E6 or 0x8B97A296
+  -- value text; accent-bright while hovered (it's the double-click reset target).
+  local mcol = hovered and theme.withAlpha(C.accentA, 0xE6) or theme.withAlpha(C.textDim, 0x96)
   if reaper.ImGui_DrawList_AddTriangleFilled then
     reaper.ImGui_DrawList_AddTriangleFilled(dl, xd - 3, y0 + 1, xd + 3, y0 + 1, xd, y0 + 5, mcol)
     reaper.ImGui_DrawList_AddTriangleFilled(dl, xd - 3, y1 - 1, xd + 3, y1 - 1, xd, y1 - 5, mcol)
@@ -92,12 +94,12 @@ local function drawFaderPolish(ctx, v, vmin, vmax, vdef, hovered, disp)
   -- centre doubles as the position marker (the job the old white line did, far more quietly). The
   -- surround is 2px wider than the body so the stock grab stays fully hidden even where ImGui widens
   -- it (integer sliders with few steps). Drawn before the value text, which the caller renders on top.
-  local body = active and 0x53C9D6FF or (hovered and 0x3FB6C4FF or 0x359DADFF)
+  local body = active and C.faderCapA or (hovered and C.faderCapH or C.faderCap)
   local cx, hw = xv, 7
   local ct, cb = y0 + 2, y1 - 2
   local FLL = reaper.ImGui_DrawFlags_RoundCornersLeft and reaper.ImGui_DrawFlags_RoundCornersLeft() or 0
   local FLR = reaper.ImGui_DrawFlags_RoundCornersRight and reaper.ImGui_DrawFlags_RoundCornersRight() or 0
-  reaper.ImGui_DrawList_AddRectFilled(dl, cx - hw - 2, ct - 1, cx + hw + 2, cb + 1, 0x0E1317D9, 5)  -- surround / shadow
+  reaper.ImGui_DrawList_AddRectFilled(dl, cx - hw - 2, ct - 1, cx + hw + 2, cb + 1, C.faderShadow, 5)  -- surround / shadow
   reaper.ImGui_DrawList_AddRectFilled(dl, cx - hw, ct, cx + hw, cb, body, 4)                        -- body
   reaper.ImGui_DrawList_AddRectFilled(dl, cx - hw, ct, cx, cb, 0xFFFFFF22, 4, FLL)                  -- lit left half
   reaper.ImGui_DrawList_AddRectFilled(dl, cx, ct, cx + hw, cb, 0x00000026, 4, FLR)                  -- shaded right half
@@ -108,7 +110,7 @@ local function drawFaderPolish(ctx, v, vmin, vmax, vdef, hovered, disp)
     local tw, th = reaper.ImGui_CalcTextSize(ctx, disp)
     if tw then
       reaper.ImGui_DrawList_AddText(dl, x0 + (frameW - tw) / 2, y0 + ((y1 - y0) - (th or 13)) / 2,
-        0xE9EEF2FF, disp)
+        C.faderText, disp)
     end
   end
 end

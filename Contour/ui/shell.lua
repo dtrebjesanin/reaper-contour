@@ -25,11 +25,6 @@ local TARGETS = {
   { id = "cc",       label = "MIDI CC" },
 }
 
-local ACCENT   = 0x2E8B9BFF   -- teal (selected)
-local ACCENT_H = 0x3FB6C4FF   -- teal hover
-local MUTE     = 0x3A3A3AFF   -- gray (unselected)
-local MUTE_H   = 0x4A4A4AFF   -- gray hover
-
 local FLAG_SETSEL = reaper.ImGui_TabItemFlags_SetSelected and reaper.ImGui_TabItemFlags_SetSelected() or 0
 
 local function opSwitcher(ctx, state)
@@ -40,10 +35,11 @@ local function opSwitcher(ctx, state)
   for i, op in ipairs(OPS) do
     if i > 1 then reaper.ImGui_SameLine(ctx) end
     local sel = state.op == op.id
-    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(),        sel and ACCENT or MUTE)
-    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), sel and ACCENT_H or MUTE_H)
-    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(),  ACCENT)
-    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(),          sel and theme.C.onAccent or theme.C.textDim)
+    local C = theme.C   -- read per frame: the palette can change under us
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(),        sel and C.accent or C.mute)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), sel and C.accentH or C.muteH)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(),  C.accent)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(),          sel and C.onAccent or C.textDim)
     local clicked
     if w then clicked = reaper.ImGui_Button(ctx, op.label, w) else clicked = reaper.ImGui_Button(ctx, op.label) end
     if clicked then
@@ -58,16 +54,45 @@ local function opSwitcher(ctx, state)
   end
 end
 
+-- The palette menu, a trailing "..." button at the end of the tab bar. Call it INSIDE the tab bar:
+-- BeginTabBar pushes an ID scope, and OpenPopup / BeginPopup must see the same one (after EndTabBar the
+-- IDs differ and the popup never opens). EndPopup only follows a BeginPopup that returned true; the body
+-- runs in a pcall so a throw cannot leave the popup open (re-raised, as with the body child below).
+local function paletteMenu(ctx)
+  if not (reaper.ImGui_TabItemButton and reaper.ImGui_TabItemFlags_Trailing and reaper.ImGui_OpenPopup
+          and reaper.ImGui_BeginPopup and reaper.ImGui_MenuItem) then return end
+  if reaper.ImGui_TabItemButton(ctx, "...##palette", reaper.ImGui_TabItemFlags_Trailing()) then
+    reaper.ImGui_OpenPopup(ctx, "##palette_menu")
+  end
+  if reaper.ImGui_BeginPopup(ctx, "##palette_menu") then
+    local ok, err = pcall(function()
+      reaper.ImGui_TextColored(ctx, theme.C.textDim, "Palette")
+      local current = theme.paletteId()   -- read once: a click below changes it mid-loop
+      for _, p in ipairs(theme.PALETTES) do
+        if reaper.ImGui_MenuItem(ctx, p.name, nil, p.id == current) then theme.setPalette(p.id) end
+      end
+    end)
+    reaper.ImGui_EndPopup(ctx)
+    if not ok then error(err, 0) end
+  end
+end
+
 local function targetTabs(ctx, state)
   if reaper.ImGui_BeginTabBar(ctx, "contour_targets") then
-    for _, t in ipairs(TARGETS) do
-      local flags = (state.forceTarget == t.id) and FLAG_SETSEL or 0
-      if reaper.ImGui_BeginTabItem(ctx, t.label, nil, flags) then
-        state.target = t.id
-        reaper.ImGui_EndTabItem(ctx)
+    -- EndTabBar must follow a BeginTabBar that returned true even when the palette menu throws (it re-raises
+    -- from inside the bar), so the bar's contents run in a pcall and the error is re-raised after EndTabBar.
+    local ok, err = pcall(function()
+      for _, t in ipairs(TARGETS) do
+        local flags = (state.forceTarget == t.id) and FLAG_SETSEL or 0
+        if reaper.ImGui_BeginTabItem(ctx, t.label, nil, flags) then
+          state.target = t.id
+          reaper.ImGui_EndTabItem(ctx)
+        end
       end
-    end
+      paletteMenu(ctx)
+    end)
     reaper.ImGui_EndTabBar(ctx)
+    if not ok then error(err, 0) end
   end
   state.forceTarget = nil   -- one-frame pulse
 end
@@ -84,7 +109,7 @@ local function contextLine(ctx, state, detected)
   if detected.hasTimeSel then
     reaper.ImGui_TextColored(ctx, theme.C.textDim, ("%.3f .. %.3f s"):format(detected.t0, detected.t1))
   else
-    reaper.ImGui_TextColored(ctx, 0xC0A040FF, "No time selection")
+    reaper.ImGui_TextColored(ctx, theme.C.hint, "No time selection")
   end
 
   -- Right-align the checkbox: content width minus the checkbox's own width (square + inner spacing + label).

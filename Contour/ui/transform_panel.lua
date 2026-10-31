@@ -4,10 +4,6 @@ local M = {}
 local theme = require("ui.theme")
 M.scope = "points"  -- "points" | "timesel" — which region Launch hands to the tool
 
-local COLOR_HINT = 0xC0A040FF
-local COLOR_OK   = 0x60C080FF
-local COLOR_ERR  = 0xE0A060FF
-
 -- Resolve the contour_transform action's command id so Launch can fire it via Main_OnCommand — which works
 -- regardless of which window is focused (a Main-section hotkey won't fire while the MIDI editor has focus).
 -- Resolve the ACTUAL installed file FIRST: AddRemoveReaScript registers it if needed and returns its current
@@ -28,7 +24,7 @@ end
 
 function M.draw(ctx, state)
   theme.sectionHeader(ctx, "Transform (mouse overlay)")
-  reaper.ImGui_TextColored(ctx, COLOR_HINT, "Pick a scope, then Launch — shaping controls are in the tool.")
+  reaper.ImGui_TextColored(ctx, theme.C.hint, "Pick a scope, then Launch — shaping controls are in the tool.")
   reaper.ImGui_Separator(ctx)
 
   -- Scope: which region the tool operates on (handed to the tool at launch via ExtState).
@@ -45,9 +41,9 @@ function M.draw(ctx, state)
     else M.status = "Couldn't locate contour_transform.lua — run it once from the Action list." end
   end
   reaper.ImGui_SameLine(ctx)
-  reaper.ImGui_TextColored(ctx, COLOR_HINT, "(or a hotkey on contour_transform.lua)")
+  reaper.ImGui_TextColored(ctx, theme.C.hint, "(or a hotkey on contour_transform.lua)")
 
-  if M.status then reaper.ImGui_TextColored(ctx, COLOR_ERR, M.status) end
+  if M.status then reaper.ImGui_TextColored(ctx, theme.C.warn, M.status) end
 end
 
 return M

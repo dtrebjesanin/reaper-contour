@@ -21,10 +21,6 @@ local target = require("core.target")
 local common = require("ui.common")
 local theme  = require("ui.theme")
 
-local COLOR_ERR  = 0xE05050FF
-local COLOR_OK   = 0x60C080FF
-local COLOR_HINT = 0xC0A040FF
-
 local SCOPE_TIMESEL, SCOPE_ENTIRE, SCOPE_SELECTED = 0, 1, 2
 
 -- Reduction slider (0..100 %) -> RDP tolerance as a fraction of the value range (span-invariant; see
@@ -316,7 +312,7 @@ function M.draw(ctx, state, detected)
     if rv then g.live = v; if not g.live then endGesture(true) end end
   end
   reaper.ImGui_SameLine(ctx)
-  reaper.ImGui_TextColored(ctx, COLOR_HINT, g.live and "on (auto-apply)" or "off (click Reduce)")
+  reaper.ImGui_TextColored(ctx, theme.C.hint, g.live and "on (auto-apply)" or "off (click Reduce)")
   reaper.ImGui_Separator(ctx)
 
   local editedThisFrame = false
@@ -356,13 +352,13 @@ function M.draw(ctx, state, detected)
 
   -- Status hints.
   if t ~= "cc" and t ~= "envelope" and t ~= "ai" then
-    reaper.ImGui_TextColored(ctx, COLOR_HINT, "Select a MIDI CC lane, a track envelope, or an automation item.")
+    reaper.ImGui_TextColored(ctx, theme.C.hint, "Select a MIDI CC lane, a track envelope, or an automation item.")
   elseif g.scope == SCOPE_SELECTED then
-    reaper.ImGui_TextColored(ctx, COLOR_HINT, "Select points in the editor, then raise Reduction.")
+    reaper.ImGui_TextColored(ctx, theme.C.hint, "Select points in the editor, then raise Reduction.")
   elseif (g.scope == SCOPE_TIMESEL or t == "envelope") and not detected.hasTimeSel then
-    reaper.ImGui_TextColored(ctx, COLOR_HINT, "Make a time selection (or switch Scope to Entire item).")
+    reaper.ImGui_TextColored(ctx, theme.C.hint, "Make a time selection (or switch Scope to Entire item).")
   elseif g.amount == 0 then
-    reaper.ImGui_TextColored(ctx, COLOR_HINT, "Raise Reduction to thin points")
+    reaper.ImGui_TextColored(ctx, theme.C.hint, "Raise Reduction to thin points")
   end
 
   local ready = readyFor(detected, g)
@@ -411,7 +407,7 @@ function M.draw(ctx, state, detected)
   end
 
   if g.status ~= "" then
-    reaper.ImGui_TextColored(ctx, g.statusErr and COLOR_ERR or COLOR_OK, g.status)
+    reaper.ImGui_TextColored(ctx, g.statusErr and theme.C.err or theme.C.ok, g.status)
   end
 end
 

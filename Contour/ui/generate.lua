@@ -244,10 +244,6 @@ local liveGesture = {
                        -- truly ends (reset in endLiveGesture / M.cleanup).
 }
 
-local COLOR_ERR  = 0xE05050FF
-local COLOR_OK   = 0x60C080FF
-local COLOR_HINT = 0xC0A040FF
-
 local function loadCustom()
   local store = customshape.decode(reaper.GetExtState("Contour", "customPresets") or "")
   if #store == 0 then store = { customshape.defaultPreset() } end
@@ -1021,7 +1017,7 @@ function M.drawBody(ctx, state, detected)
       local gx1, gy1 = reaper.ImGui_GetItemRectMax(ctx)
       local gdl = reaper.ImGui_GetWindowDrawList(ctx)
       local cx, cyy = (gx0 + gx1) / 2, (gy0 + gy1) / 2
-      reaper.ImGui_DrawList_AddLine(gdl, cx - 14, cyy, cx + 14, cyy, 0x6A737BFF, 2)
+      reaper.ImGui_DrawList_AddLine(gdl, cx - 14, cyy, cx + 14, cyy, theme.C.grip, 2)
     end
     if reaper.ImGui_IsItemActive(ctx) then
       local _, my = reaper.ImGui_GetMousePos(ctx)
@@ -1090,7 +1086,7 @@ function M.drawFooter(ctx, state, detected)
     end
   end
   reaper.ImGui_SameLine(ctx)
-  reaper.ImGui_TextColored(ctx, COLOR_HINT, g.live and "on (auto-apply)" or "off (click Generate)")
+  reaper.ImGui_TextColored(ctx, theme.C.hint, g.live and "on (auto-apply)" or "off (click Generate)")
 
   -- == Generate button == Non-live: the button commits on click (slice-3 behavior).
   if not g.live then
@@ -1123,12 +1119,12 @@ function M.drawFooter(ctx, state, detected)
   -- == Hints ==
   local tgtKind = detected and detected.target
   if tgtKind ~= "cc" and tgtKind ~= "envelope" and tgtKind ~= "ai" then
-    reaper.ImGui_TextColored(ctx, COLOR_HINT, "Select a MIDI CC lane, a track envelope, or an automation item.")
+    reaper.ImGui_TextColored(ctx, theme.C.hint, "Select a MIDI CC lane, a track envelope, or an automation item.")
   elseif g.scope == common.SCOPE_TIMESEL and not detected.hasTimeSel then
-    reaper.ImGui_TextColored(ctx, COLOR_HINT, "Make a time selection (or switch Scope to Entire item).")
+    reaper.ImGui_TextColored(ctx, theme.C.hint, "Make a time selection (or switch Scope to Entire item).")
   elseif currentShapeId(g) == "none" then
     -- v2.1 U1: the default None shape is a no-op; prompt the user to choose a shape.
-    reaper.ImGui_TextColored(ctx, COLOR_HINT, "Pick a shape to generate")
+    reaper.ImGui_TextColored(ctx, theme.C.hint, "Pick a shape to generate")
   end
 
   -- Clip hint: convert the native % sliders to value units (CC lane MID=63.5, HALF=63.5) and check
@@ -1144,7 +1140,7 @@ function M.drawFooter(ctx, state, detected)
     local lo = center - baseHalf + math.min(0, tiltL, tiltR)
     local hi = center + baseHalf + math.max(0, tiltL, tiltR)
     if lo < 0 or hi > 127 then
-      reaper.ImGui_TextColored(ctx, COLOR_HINT, "Values will clip to 0-127")
+      reaper.ImGui_TextColored(ctx, theme.C.hint, "Values will clip to 0-127")
     end
   end
 
@@ -1237,7 +1233,7 @@ function M.drawFooter(ctx, state, detected)
   end
 
   if g.status ~= "" then
-    reaper.ImGui_TextColored(ctx, g.statusErr and COLOR_ERR or COLOR_OK, g.status)
+    reaper.ImGui_TextColored(ctx, g.statusErr and theme.C.err or theme.C.ok, g.status)
   end
 end
 

@@ -228,6 +228,8 @@ end
 local function balanced(label)
   h.eq(stub.rec.childBegin, stub.rec.childEnd, label .. ": BeginChild/EndChild")
   h.eq(stub.rec.tableBegin, stub.rec.tableEnd, label .. ": BeginTable/EndTable")
+  h.eq(stub.rec.popupBegin, stub.rec.popupEnd, label .. ": BeginPopup/EndPopup")
+  h.eq(stub.rec.tabBarBegin, stub.rec.tabBarEnd, label .. ": BeginTabBar/EndTabBar")
 end
 
 -- Swap reaper.<name> for the duration of fn, always restoring the original.
@@ -545,6 +547,384 @@ h.test("theme.sectionHeader hairline ends at the column edge, falling back to th
   rec.ImGui_GetWindowSize = function() return 400, 600 end
   with(rec, function() theme.sectionHeader(CTX, "X") end)
   h.almost(x2s[1], 5 + 400 - 26, 1e-6, "fallback: wx + ww - 26")
+end)
+
+-- ---- palettes ------------------------------------------------------------------------------------------
+-- Today's Contour look, value for value: the OLD palette keys plus the panel colours that used to be
+-- hardcoded in the panels and the overlay. Selecting "contour" must reproduce every one of them.
+local CONTOUR_NOW = {
+  text = 0xE3E8ECFF, textDim = 0x8B97A2FF,
+  winBg = 0x1B1E23FF, childBg = 0x20242AFF, popupBg = 0x22262CFF,
+  frame = 0x262D34FF, frameH = 0x303842FF, frameA = 0x3A424DFF,
+  accent = 0x2E8B9BFF, accentH = 0x3FB6C4FF, accentA = 0x53C9D6FF, accentDim = 0x2A6A75FF,
+  tab = 0x262B31FF, tabH = 0x3FB6C4FF, tabSel = 0x2E8B9BFF,
+  sep = 0x323A44FF,
+  scrollBg = 0x1B1E23FF, scrollGrab = 0x3C444EFF, scrollGrabH = 0x4A535EFF,
+  header = 0x2E8B9B33, headerH = 0x2E8B9B55, headerA = 0x2E8B9B77,
+  button = 0x262D34FF, buttonH = 0x303842FF, buttonA = 0x2E8B9BFF,
+  onAccent = 0xF3FBFCFF,
+  -- the stock slider grab and check mark, which COLORS used to take from frameA / 0x4A535EFF / accentH
+  sliderGrab = 0x3A424DFF, sliderGrabA = 0x4A535EFF, check = 0x3FB6C4FF,
+  -- hardcoded in the panels
+  mute = 0x3A3A3AFF, muteH = 0x4A4A4AFF, sectionHdr = 0x3FB6C4FF,
+  hint = 0xC0A040FF, ok = 0x60C080FF, err = 0xE05050FF, warn = 0xE0A060FF,
+  grip = 0x6A737BFF,
+  padBg = 0x10151AFF, padGrid = 0x3A434BFF, padAxis = 0x55636EFF, padCurve = 0x48C6D4FF, padPoint = 0x9FE9F1FF,
+  faderFill = 0x2E8B9B4D, faderCap = 0x359DADFF, faderShadow = 0x0E1317D9, faderText = 0xE9EEF2FF,
+  -- the cap's hover / press colours, which common.lua used to take from accentH / accentA
+  faderCapH = 0x3FB6C4FF, faderCapA = 0x53C9D6FF,
+  hudBg = 0x12242BF7,
+}
+
+-- WCAG relative luminance / contrast ratio of two 0xRRGGBBAA palette colours (alpha ignored), written here
+-- on purpose so the check does not share code with ui/theme.
+local function lumOf(col)
+  local function lin(v) v = v / 255; return v <= 0.04045 and v / 12.92 or ((v + 0.055) / 1.055) ^ 2.4 end
+  local r, g, b = (col >> 24) & 0xFF, (col >> 16) & 0xFF, (col >> 8) & 0xFF
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+end
+local function contrastOf(a, b)
+  local la, lb = lumOf(a), lumOf(b)
+  if la < lb then la, lb = lb, la end
+  return (la + 0.05) / (lb + 0.05)
+end
+
+local function nat(rgb) return ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | (rgb >> 16) end   -- 0xRRGGBB -> native 0x00BBGGRR
+local function sortedKeys(t) local ks = {} for k in pairs(t) do ks[#ks + 1] = k end table.sort(ks) return ks end
+
+-- Run fn, then ALWAYS restore the palette, the stub's theme colours and clock, and the content width.
+local function withTheme(fn)
+  local id, colors, now = theme.paletteId(), stub.themeColors, stub.now
+  local ok, err = pcall(fn)
+  stub.themeColors, stub.now, stub.AVAIL_W = colors, now, 360
+  theme.setPalette(id)
+  if not ok then error(err, 0) end
+end
+
+local DARK  = { col_main_bg2 = 0x1E1F24, col_main_editbk = 0x2A2C33, genlist_fg = 0xD0D4DA, col_toolbar_text_on = 0x46BAFE }
+local LIGHT = { col_main_bg2 = 0xFFFFFF, col_main_editbk = 0xF0F0F0, genlist_fg = 0x202020, col_toolbar_text_on = 0x0066CC }
+local function readFrom(t) return function(k) return t[k] end end
+local function nativeTheme(t) local o = {} for k, v in pairs(t) do o[k] = nat(v) end return o end
+
+h.test("theme.C is one table; Contour reproduces today's colours exactly", function()
+  withTheme(function()
+    local c = theme.C
+    theme.setPalette("contour")
+    h.truthy(theme.C == c, "theme.C must stay the same table object")
+    for _, k in ipairs(sortedKeys(CONTOUR_NOW)) do h.eq(theme.C[k], CONTOUR_NOW[k], "contour." .. k) end
+    for k in pairs(theme.C) do h.truthy(CONTOUR_NOW[k] ~= nil, "unexpected key in theme.C: " .. k) end
+    h.eq(theme.withAlpha(0x2E8B9BFF, 0xCC), 0x2E8B9BCC, "BOXCOL: accent at alpha 0xCC")
+    h.eq(theme.withAlpha(theme.C.accentA, 0xE6), 0x53C9D6E6, "hovered fader notch")
+    h.eq(theme.withAlpha(theme.C.textDim, 0x96), 0x8B97A296, "idle fader notch")
+    h.eq(theme.withAlpha(theme.C.sep, 0x80), 0x323A4480, "section header hairline")
+  end)
+end)
+
+h.test("theme.derive: pure, one key set for every palette", function()
+  local saved = _G.reaper
+  _G.reaper = nil                               -- derive / autoSpec must not touch the API
+  local ok, err = pcall(function()
+    for _, p in ipairs(theme.PALETTES) do
+      if p.spec then
+        local d = theme.derive(p.spec)
+        h.eq(table.concat(sortedKeys(d), ","), table.concat(sortedKeys(CONTOUR_NOW), ","), p.id .. ": key set")
+        for k, v in pairs(d) do h.truthy(math.type(v) == "integer" and v >= 0 and v <= 0xFFFFFFFF, p.id .. "." .. k) end
+      end
+    end
+    local light = theme.derive(theme.autoSpec(readFrom(LIGHT)))
+    h.eq(table.concat(sortedKeys(light), ","), table.concat(sortedKeys(CONTOUR_NOW), ","), "light auto: key set")
+  end)
+  _G.reaper = saved
+  h.truthy(ok, tostring(err))
+end)
+
+h.test("palette order and ids", function()
+  local ids = {}
+  for _, p in ipairs(theme.PALETTES) do ids[#ids + 1] = p.id end
+  h.eq(table.concat(ids, ","), "auto,contour,danitreble,cassatt,kandinsky,tam,paquin,klimt")
+  h.eq(theme.PALETTES[1].name, "Auto (REAPER theme)")
+end)
+
+h.test("contrast floors hold for every fixed palette and for Auto on a dark and a light REAPER theme", function()
+  local function check(label, c, skipOnAccent)
+    h.truthy(contrastOf(c.text, c.winBg)   >= 4.5, label .. ": text/bg "     .. contrastOf(c.text, c.winBg))
+    h.truthy(contrastOf(c.text, c.frame)   >= 4.5, label .. ": text/field "  .. contrastOf(c.text, c.frame))
+    h.truthy(contrastOf(c.textDim, c.winBg) >= 4.5, label .. ": dim/bg "     .. contrastOf(c.textDim, c.winBg))
+    if not skipOnAccent then
+      h.truthy(contrastOf(c.onAccent, c.accent) >= 4.5, label .. ": onAccent/accent " .. contrastOf(c.onAccent, c.accent))
+    end
+    for _, k in ipairs({ "hint", "ok", "err" }) do
+      h.truthy(contrastOf(c[k], c.winBg) >= 3, label .. ": " .. k .. "/bg " .. contrastOf(c[k], c.winBg))
+    end
+  end
+  for _, p in ipairs(theme.PALETTES) do
+    if p.spec then check(p.id, theme.derive(p.spec))
+    -- Contour keeps today's exact values, and its onAccent is 3.8:1 on the teal (not floored, by design)
+    elseif p.full then check(p.id, CONTOUR_NOW, true) end
+  end
+  check("auto dark",  theme.derive(theme.autoSpec(readFrom(DARK))))
+  check("auto light", theme.derive(theme.autoSpec(readFrom(LIGHT))))
+  -- status colours keep their hue on dark backgrounds and turn darker on light ones
+  h.eq(theme.derive(theme.PALETTES[5].spec).hint, 0xC0A040FF, "dark palette: hint unchanged")
+  local lt = theme.derive(theme.autoSpec(readFrom(LIGHT)))
+  for _, k in ipairs({ "hint", "ok", "err", "warn" }) do
+    h.truthy(lumOf(lt[k]) < lumOf(CONTOUR_NOW[k]), "light background: " .. k .. " darker than the dark variant")
+  end
+end)
+
+h.test("Auto reads the real Reapertips theme", function()
+  withTheme(function()
+    -- natives are 0x00BBGGRR. NB: 16693574 is 0xFEB946 -> rgb 0x46B9FE (one green step off 0x46BAFE).
+    stub.themeColors = { col_main_bg2 = 4079166, col_main_editbk = 2763306, genlist_fg = 13158600,
+                         col_toolbar_text_on = 16693574, genlist_selbg = 14569774 }
+    theme.setPalette("auto")
+    h.eq(theme.C.winBg, 0x3E3E3EFF); h.eq(theme.C.frame, 0x2A2A2AFF)
+    h.eq(theme.C.text, 0xC8C8C8FF);  h.eq(theme.C.accent, 0x46B9FEFF)
+    -- the same mapping seen through the pure helper
+    local spec = theme.autoSpec(readFrom({ col_main_bg2 = 0x3E3E3E, col_main_editbk = 0x2A2A2A, genlist_fg = 0xC8C8C8,
+                                           col_toolbar_text_on = 0x46B9FE }))
+    h.eq(spec.bg, 0x3E3E3E); h.eq(spec.field, 0x2A2A2A); h.eq(spec.text, 0xC8C8C8); h.eq(spec.accent, 0x46B9FE)
+    -- a negative native (flag bits in the high byte, as col_main_bg is on Reapertips) is masked, not rejected
+    stub.themeColors = { col_main_bg = (0xFF000000 | 0x3E3E3E) - 0x100000000, genlist_fg = 13158600,
+                         col_toolbar_text_on = 16693574 }
+    theme.setPalette("auto")
+    h.eq(theme.C.winBg, 0x3E3E3EFF, "flag bits masked off, bg read from col_main_bg")
+    h.eq(theme.C.accent, 0x46B9FEFF)
+  end)
+end)
+
+h.test("Auto falls back: nothing found -> Contour; accent == bg -> genlist_selbg", function()
+  withTheme(function()
+    stub.themeColors = {}
+    theme.setPalette("auto")
+    for _, k in ipairs(sortedKeys(CONTOUR_NOW)) do h.eq(theme.C[k], CONTOUR_NOW[k], "no theme: " .. k) end
+    -- bg, text or accent missing => no spec
+    h.eq(theme.autoSpec(readFrom({ col_main_bg2 = 0x202020, genlist_fg = 0xFFFFFF })), nil, "no accent")
+    h.eq(theme.autoSpec(readFrom({ col_main_bg2 = 0x202020, col_toolbar_text_on = 0x46BAFE })), nil, "no text")
+    h.eq(theme.autoSpec(readFrom({ genlist_fg = 0xFFFFFF, col_toolbar_text_on = 0x46BAFE })), nil, "no bg")
+    -- GetThemeColor / ColorFromNative unknown to the API (the stub's catch-all then returns nil)
+    local gt, cn = reaper.GetThemeColor, reaper.ColorFromNative
+    reaper.GetThemeColor, reaper.ColorFromNative = nil, nil
+    local ok, err = pcall(theme.setPalette, "auto")
+    reaper.GetThemeColor, reaper.ColorFromNative = gt, cn
+    h.truthy(ok, tostring(err))
+    h.eq(theme.C.accent, CONTOUR_NOW.accent, "no GetThemeColor: Contour")
+    -- the accent equals the bg (or is under 2:1 against it): the next candidate is used
+    local t = { col_main_bg2 = 0x1E1F24, genlist_fg = 0xD0D4DA, col_toolbar_text_on = 0x1E1F24, genlist_selbg = 0x46BAFE }
+    h.eq(theme.autoSpec(readFrom(t)).accent, 0x46BAFE, "accent == bg -> genlist_selbg")
+    stub.themeColors = nativeTheme(t)
+    theme.setPalette("auto")
+    h.eq(theme.C.accent, 0x46BAFEFF, "accent == bg -> genlist_selbg, through GetThemeColor")
+    t.genlist_selbg = 0x202228                 -- also too close to the bg: nothing usable, so Contour
+    h.eq(theme.autoSpec(readFrom(t)), nil, "no accent clears 2:1")
+  end)
+end)
+
+h.test("palette persistence: Auto by default, setPalette saves and applies in place", function()
+  withTheme(function()
+    stub.themeColors = {}
+    local c = theme.C
+    -- empty or unknown ExtState => auto (seen by the once-a-second re-read)
+    theme.setPalette("klimt")
+    stub.rec.extState.palette = nil
+    stub.now = stub.now + 2; theme.push(CTX); theme.pop(CTX)
+    h.eq(theme.paletteId(), "auto", "empty ExtState -> auto")
+    theme.setPalette("klimt")
+    stub.rec.extState.palette = "no-such-palette"
+    stub.now = stub.now + 2; theme.push(CTX); theme.pop(CTX)
+    h.eq(theme.paletteId(), "auto", "unknown ExtState -> auto")
+    -- setPalette: saved + applied at once, same table object
+    local before = theme.C.accent
+    theme.setPalette("tam")
+    h.eq(stub.rec.extState.palette, "tam")
+    h.eq(theme.paletteId(), "tam")
+    h.eq(theme.C.accent, 0xEF8737FF); h.truthy(theme.C.accent ~= before)
+    h.truthy(theme.C == c, "same table object after setPalette")
+    -- a change saved elsewhere (the panel, seen from the overlay's Lua state) is followed on the next re-read
+    stub.rec.extState.palette = "cassatt"
+    stub.now = stub.now + 2; theme.push(CTX); theme.pop(CTX)
+    h.eq(theme.paletteId(), "cassatt", "ExtState change followed")
+    h.eq(theme.C.accent, 0x7FA074FF)
+    theme.setPalette("not-a-palette")          -- unknown id degrades to auto
+    h.eq(theme.paletteId(), "auto")
+  end)
+end)
+
+h.test("Auto palette follows a REAPER theme change at most once a second", function()
+  withTheme(function()
+    stub.themeColors = nativeTheme(DARK); stub.now = 500
+    theme.setPalette("auto")
+    local bgBefore = theme.C.winBg
+    h.eq(bgBefore & 0xFFFFFF00, 0x1E1F2400, "dark theme applied")
+    stub.themeColors = nativeTheme(LIGHT)
+    stub.now = 500.5
+    theme.push(CTX); theme.pop(CTX)
+    h.eq(theme.C.winBg, bgBefore, "under 1 s: nothing re-read")
+    stub.now = 501.5
+    theme.push(CTX); theme.pop(CTX)
+    h.eq(theme.C.winBg, 0xFFFFFFFF, "past 1 s: the new theme applies")
+    -- no further change => nothing is re-applied (the table's values stay put)
+    local snap = {}
+    for k, v in pairs(theme.C) do snap[k] = v end
+    stub.now = 503; theme.push(CTX); theme.pop(CTX)
+    for k, v in pairs(snap) do h.eq(theme.C[k], v, "stable " .. k) end
+    -- fixed palettes ignore the REAPER theme
+    theme.setPalette("klimt")
+    stub.themeColors = nativeTheme(DARK); stub.now = 510
+    theme.push(CTX); theme.pop(CTX)
+    h.eq(theme.C.accent, 0x924099FF)
+  end)
+end)
+
+-- The fader cap must brighten on hover and again on press (darken on a light theme), in every palette:
+-- deriving hover / press from the accent instead of the cap colour made Klimt's pink cap go dark purple.
+h.test("fader cap: hover and press move away from the idle cap in the 'lighter' direction", function()
+  local function check(label, c)
+    local light = lumOf(c.winBg) > 0.5
+    local idle, hov, act = lumOf(c.faderCap), lumOf(c.faderCapH), lumOf(c.faderCapA)
+    if light then
+      h.truthy(hov <= idle and act <= hov, label .. ": darker on hover, darker still on press")
+    else
+      h.truthy(hov >= idle and act >= hov, label .. ": lighter on hover, lighter still on press")
+    end
+  end
+  for _, p in ipairs(theme.PALETTES) do
+    if p.spec then check(p.id, theme.derive(p.spec)) end
+  end
+  check("contour", CONTOUR_NOW)
+  check("auto dark", theme.derive(theme.autoSpec(readFrom(DARK))))
+  check("auto light", theme.derive(theme.autoSpec(readFrom(LIGHT))))
+  -- and common.lua draws the hovered cap in faderCapH
+  withTheme(function()
+    theme.setPalette("klimt")
+    local got = {}
+    with({ ImGui_DrawList_AddRectFilled = function(_dl, _a, _b, _c, _d, col) got[col] = true end,
+           ImGui_IsItemHovered = function() return true end },
+      function() stub.reset(); common.tickReset(CTX, { v = 10 }, "v", 0, 100, 50, "10") end)
+    h.truthy(got[theme.C.faderCapH], "hovered cap uses faderCapH")
+  end)
+end)
+
+-- ---- the palette menu in the shell ---------------------------------------------------------------------
+h.test("shell palette menu: popups balance at 360 and 700 px, button + popup sit inside the tab bar", function()
+  withTheme(function()
+    for _, w in ipairs({ 360, 700 }) do
+      local label = "shell palette menu width=" .. w
+      stub.reset()
+      atWidth(w, function() noThrow(label, function() shell.draw(CTX, newState(), detEnv()) end) end)
+      balanced(label)
+      h.eq(stub.rec.popupBegin, 1, label .. ": one popup per frame")
+    end
+    -- order: tab button, then BeginPopup, THEN EndTabBar; a click on the button opens the popup
+    local order, opened = {}, nil
+    with({
+      ImGui_TabItemButton = function(_c, lbl) order[#order + 1] = "button:" .. lbl; return true end,
+      ImGui_OpenPopup = function(_c, id) opened = id end,
+      ImGui_BeginPopup = function(_c, id) order[#order + 1] = "popup:" .. id; stub.rec.popupBegin = stub.rec.popupBegin + 1; return true end,
+      ImGui_EndTabBar = function() order[#order + 1] = "endbar" end,
+    }, function() stub.reset(); shell.draw(CTX, newState(), detEnv()) end)
+    h.eq(table.concat(order, " "), "button:...##palette popup:##palette_menu endbar")
+    h.eq(opened, "##palette_menu", "a click opens the popup")
+    -- one MenuItem per palette in menu order; only the active one is ticked; clicking Tam selects it
+    theme.setPalette("klimt")
+    local names, ticked = {}, {}
+    with({ ImGui_MenuItem = function(_c, lbl, _sc, sel) names[#names + 1] = lbl; if sel then ticked[#ticked + 1] = lbl end
+                                    return lbl == "Tam" end },
+      function() stub.reset(); shell.draw(CTX, newState(), detEnv()) end)
+    h.eq(table.concat(names, "|"), "Auto (REAPER theme)|Contour|Dani Treble|Cassatt|Kandinsky|Tam|Paquin|Klimt")
+    h.eq(table.concat(ticked, "|"), "Klimt", "the active palette is ticked")
+    h.eq(theme.paletteId(), "tam", "clicking Tam selects it")
+    h.eq(stub.rec.extState.palette, "tam")
+    balanced("menu click")
+    -- a throw inside the popup body still EndPopups and re-raises
+    stub.reset()
+    local ok, err
+    with({ ImGui_MenuItem = function() error("menu boom") end }, function() ok, err = pcall(shell.draw, CTX, newState(), detEnv()) end)
+    h.truthy(not ok and tostring(err):find("menu boom", 1, true), "the popup error is re-raised: " .. tostring(err))
+    h.eq(stub.rec.popupBegin, 1); h.eq(stub.rec.popupEnd, 1, "EndPopup ran")
+    h.eq(stub.rec.tabBarEnd, stub.rec.tabBarBegin, "EndTabBar ran although the popup threw")
+  end)
+end)
+
+-- ---- panels read theme.C when they draw ----------------------------------------------------------------
+h.test("panels follow a palette change (no colour is cached at load)", function()
+  withTheme(function()
+    local function capture(fnNames, run)
+      local got, over = {}, {}
+      for _, n in ipairs(fnNames) do
+        over[n] = function(_a, ...) local a = { ... }; for _, v in ipairs(a) do if math.type(v) == "integer" and v > 0xFFFF then got[v] = true end end end
+      end
+      with(over, function() stub.reset(); run() end)
+      return got
+    end
+    local pts = { { x = 0, y = -1, shape = 1 }, { x = 1, y = 1, shape = 1 } }
+    for _, id in ipairs({ "contour", "tam", "klimt" }) do
+      theme.setPalette(id)
+      local c = theme.C
+      local pad = capture({ "ImGui_DrawList_AddRectFilled", "ImGui_DrawList_AddLine", "ImGui_DrawList_AddCircleFilled" },
+        function() drawpad.draw(CTX, pts, {}) end)
+      for _, k in ipairs({ "padBg", "padGrid", "padAxis", "padCurve", "padPoint" }) do h.truthy(pad[c[k]], id .. " drawpad " .. k) end
+      local fader = capture({ "ImGui_DrawList_AddRectFilled", "ImGui_DrawList_AddTriangleFilled" },
+        function() common.tickReset(CTX, { v = 10 }, "v", 0, 100, 50, "10") end)
+      for _, k in ipairs({ "faderFill", "faderShadow", "faderCap" }) do h.truthy(fader[c[k]], id .. " fader " .. k) end
+      local btns = capture({ "ImGui_PushStyleColor" }, function() shell.draw(CTX, newState(), detEnv()) end)
+      for _, k in ipairs({ "accent", "accentH", "mute", "muteH", "onAccent", "textDim" }) do h.truthy(btns[c[k]], id .. " op switcher " .. k) end
+      local hint = capture({ "ImGui_TextColored" }, function() shell.draw(CTX, newState(), detNone()) end)
+      h.truthy(hint[c.hint], id .. ": 'No time selection' uses theme.C.hint")
+    end
+    -- hint/ok/err really change with the background (light REAPER theme => darker variants)
+    stub.themeColors = nativeTheme(LIGHT); theme.setPalette("auto")
+    local seen = {}
+    with({ ImGui_TextColored = function(_c, col, s) seen[s] = col end }, function()
+      stub.reset(); shell.draw(CTX, newState(), detNone())
+    end)
+    h.eq(seen["No time selection"], theme.C.hint)
+    h.truthy(seen["No time selection"] ~= 0xC0A040FF, "light theme: the hint colour is the darker variant")
+  end)
+end)
+
+-- ---- the old render matrix, once more under a different palette -----------------------------------------
+h.test("render matrix runs under the Klimt palette", function()
+  withTheme(function()
+    theme.setPalette("klimt")
+    noThrow("theme.push/pop", function() theme.push(CTX); theme.pop(CTX); theme.push(CTX, true); theme.pop(CTX) end)
+    for _, w in ipairs({ 360, 700 }) do
+      for _, op in ipairs({ "generate", "reduce", "transform" }) do
+        for _, det in ipairs({ detEnv(), detCC(), detAI(), detNone() }) do
+          local label = ("klimt shell op=%s target=%s width=%d"):format(op, tostring(det.target), w)
+          stub.reset()
+          local st = newState(); st.op = op
+          atWidth(w, function() noThrow(label, function() shell.draw(CTX, st, det) end) end)
+          balanced(label)
+        end
+      end
+    end
+    for _, det in ipairs({ detEnv(), detAI(), detCC() }) do
+      local st = newState(); st.op = "generate"; st.target = det.target
+      generate.draw(CTX, st, det)
+      local g = st.gen; seedCustom(g)
+      for shapeIdx = 0, 12 do
+        g.shapeIdx = shapeIdx
+        stub.reset()
+        noThrow(("klimt generate shape=%d target=%s"):format(shapeIdx, det.target), function() generate.draw(CTX, st, det) end)
+      end
+    end
+    local st = newState(); st.op = "reduce"
+    reduce.draw(CTX, st, detEnv())             -- one draw to initialise state.red
+    for _, amt in ipairs({ 0, 50, 100 }) do
+      st.red.amount = amt
+      stub.reset(); noThrow("klimt reduce amount=" .. amt, function() reduce.draw(CTX, st, detEnv()) end)
+    end
+    for _, scope in ipairs({ "points", "timesel" }) do
+      transform_panel.scope = scope
+      stub.reset(); noThrow("klimt transform_panel", function() transform_panel.draw(CTX, newState()) end)
+    end
+    overlay.params = { knob = 30, shape = "power", symmetrical = false, flipMode = "absolute" }
+    stub.reset()
+    noThrow("klimt overlay", function()
+      h.truthy(overlay.start(CTX, detEnv())); overlay.frame(CTX); overlay.frame(CTX); overlay.finish()
+    end)
+  end)
 end)
 
 h.run()
