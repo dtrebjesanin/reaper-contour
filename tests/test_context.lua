@@ -567,6 +567,42 @@ h.test("a razor read that throws degrades to razor-off instead of breaking detec
   h.truthy(tostring(ctx._razorError):find("boom"), "the error is kept for inspection")
 end)
 
+h.test("[M4] a project change starts a new baseline: areas already in the other project never switch", function()
+  fresh(); project(); S.env = "ENV_A"
+  S.proj = "P1"
+  _G.reaper.EnumProjects = function() return S.proj, "" end
+  S.now = 0; rdet()
+  S.proj = "P2"; S.tracks[2].razor = '1 2 "{B}"'          -- the other project already has areas on Pad
+  S.now = 0.2; h.eq(rdet().razorSwitchTo, nil, "first read in the new project is a baseline")
+  S.now = 0.5; h.eq(rdet().razorSwitchTo, nil, "settled: still not a change")
+  S.now = 1.0; h.eq(rdet().razorSwitchTo, nil)
+  -- the baseline works: a later change inside the new project switches as usual
+  S.now = 1.2; S.tracks[2].razor = '1 2 "{B}" 4 5 "{P}"'; rdet()
+  S.now = 1.5; h.eq(rdet().razorSwitchTo, "ENV_P", "a new area in the new project switches")
+  -- and back to the first project, whose areas differ from the ones last settled
+  S.proj = "P1"; S.tracks[2].razor = '7 8 "{B}"'
+  S.now = 2.0; h.eq(rdet().razorSwitchTo, nil, "back in project 1: a baseline again")
+  S.now = 2.5; h.eq(rdet().razorSwitchTo, nil)
+  S.now = 3.0; h.eq(rdet().razorSwitchTo, nil)
+end)
+
+h.test("[M4] a project change inside the read throttle is seen at once", function()
+  fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
+  S.proj = "P1"
+  _G.reaper.EnumProjects = function() return S.proj, "" end
+  S.now = 1.0; h.eq(rdet().rangeSource, "timesel")
+  S.proj = "P2"; S.tracks[1].razor = '2 4 "{A}"'
+  S.now = 1.05; h.eq(rdet().rangeSource, "razor", "another project: not the last snapshot of the first")
+end)
+
+h.test("[M4] without EnumProjects, razor support is unchanged", function()
+  fresh(); project(); S.env = "ENV_A"
+  h.eq(_G.reaper.EnumProjects, nil)
+  S.now = 0; rdet()
+  S.now = 0.2; S.tracks[2].razor = '1 2 "{B}"'; rdet()
+  S.now = 0.5; h.eq(rdet().razorSwitchTo, "ENV_B")
+end)
+
 h.test("[M3] a razor error is printed once per distinct message, and cleared by a good read", function()
   fresh(); project(); S.env = "ENV_A"; S.timeSel = { 0, 10 }
   local log = {}

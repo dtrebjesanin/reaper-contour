@@ -94,8 +94,9 @@ end
 -- A razor area on the target's lane is its range (core/razor.lua holds the pure logic). Contour keeps ONE
 -- snapshot of every track's P_RAZOREDITS, re-read at most every RAZOR_READ_SEC. Each read also feeds a
 -- settler: a change counts only after RAZOR_SETTLE_SEC of stability with the left mouse button up, and the
--- first read is a baseline, so areas that exist when Contour starts never switch the lane. When a settled
--- change adds areas to exactly one resolvable envelope lane, detect() reports it once in razorSwitchTo.
+-- first read is a baseline, so areas that exist when Contour starts never switch the lane (the first read after
+-- the current project changes is a baseline too). When a settled change adds areas to exactly one resolvable
+-- envelope lane (razor.dragLanes), detect() reports it once in razorSwitchTo.
 -- Razor support needs the track API below; without it (or if a read throws) the range is the time
 -- selection, exactly as before.
 local RAZOR_READ_SEC   = 0.1
@@ -105,9 +106,12 @@ local rz            -- last read: { snap, lanes, at = clock time or nil, switchT
 local settler       -- razor.newSettler, created on the first read
 local settledSnap   -- the snapshot at the last settled state (dragLanes compares against it)
 local shownErr      -- the last razor error message printed to the console (once per distinct message)
+local rzProject     -- the project (reaper.EnumProjects(-1)) rz / settler / settledSnap belong to; nil without the API
 
 -- M._razorError is the last razor read's error (nil after a good read); the console gets each distinct message once.
-function M._resetRazor() rz, settler, settledSnap, shownErr, M._razorError = nil, nil, nil, nil, nil end  -- test-only
+function M._resetRazor()  -- test-only
+  rz, settler, settledSnap, shownErr, rzProject, M._razorError = nil, nil, nil, nil, nil, nil
+end
 
 local RAZOR_API = {
   "GetMasterTrack", "CountTracks", "GetTrack", "GetSetMediaTrackInfo_String",
@@ -186,10 +190,23 @@ local function leftMouseDown()
   return type(m) == "number" and (math.floor(m) & 1) ~= 0
 end
 
+-- The project the razor state is about (REAPER's current project tab); nil when EnumProjects is missing.
+local function currentProject()
+  if not reaper.EnumProjects then return nil end
+  return (reaper.EnumProjects(-1))
+end
+
 -- The current razor state (throttled), or nil without the track API. The second result is true on a real
 -- read, false when the last snapshot is reused; only a real read can carry a switchTo.
 local function razorState()
   if not razorApi() then return nil end
+  -- Another project tab has its own razor areas: they are not "new" here. Start over, so the next read is a
+  -- baseline (and never a stale snapshot of the first project, whatever the throttle says).
+  local proj = currentProject()
+  if proj ~= rzProject then
+    rz, settler, settledSnap = nil, nil, nil
+    rzProject = proj
+  end
   local now = reaper.time_precise and reaper.time_precise() or nil
   -- A clock that went backwards (new session, tests) must not freeze the snapshot. The 1e-9 is float
   -- slack: 0.6 - 0.5 is a hair under 0.1 and must still count as a full interval.
