@@ -180,7 +180,9 @@ local function loop()
   end
   local sizeCond = (reaper.ImGui_Cond_Once and reaper.ImGui_Cond_Once())
     or (reaper.ImGui_Cond_FirstUseEver and reaper.ImGui_Cond_FirstUseEver()) or 0
-  reaper.ImGui_SetNextWindowSize(ctx, 460, math.min(1050, maxH), sizeCond)
+  -- Default width opens Generate in two columns: 720 minus the window padding (2 x 14) and the body's
+  -- scrollbar (12) leaves 680 px of content, above common.TWO_COL_MIN_W (600).
+  reaper.ImGui_SetNextWindowSize(ctx, 720, math.min(1050, maxH), sizeCond)
   -- The OUTER window never scrolls: the header and Generate's footer stay pinned, and the shell's body
   -- child (which has its own always-on scrollbar, so the content width is stable across ops) does the
   -- scrolling instead.
