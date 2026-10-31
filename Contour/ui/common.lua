@@ -59,13 +59,13 @@ function M.spansFor(tgt, detected, g)
   return { { t0, t1 } }
 end
 
--- The first span's t0, t1 (the single-span callers: Reduce, until it takes the list). With no span at
--- all (a razor area outside the item) it falls back to the time-selection span, because these callers
--- have no way to say "no range"; Generate never calls this.
+-- The first span's t0, t1, for a caller that works on one span. With no span at all (a razor area outside the
+-- item) it returns nil: it never falls back to the time selection. Reduce no longer calls this (it takes the
+-- whole list from spansFor, like Generate).
 function M.spanFor(tgt, detected, g)
   local first = M.spansFor(tgt, detected, g)[1]
   if first then return first[1], first[2] end
-  return timeSelSpan(tgt, detected, tgt and tgt.kind and tgt:kind())
+  return nil
 end
 
 -- Is there a range to work on? detected.hasRange (razor areas or time selection) when the descriptor

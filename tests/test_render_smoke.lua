@@ -1016,6 +1016,10 @@ h.test("common.spansFor: razor wins, Entire item ignores it, no razor fields = t
   -- spanFor stays: the first span's t0, t1
   local s0, s1 = common.spanFor(target.fromContext(detAI()), razor(detAI(), { { 1, 2 }, { 4, 5 } }), gT)
   h.almost(s0, 1); h.almost(s1, 2)
+  -- [M7] ...and with no span at all (a razor area outside the item) it is nil, never the time selection
+  det = detAI(); det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "razor", {}, false, true
+  local n0, n1 = common.spanFor(target.fromContext(det), det, gT)
+  h.eq(n0, nil, "no span: nil, not the time selection"); h.eq(n1, nil)
 end)
 
 h.test("Generate writes one LFO per razor area in one Undo step", function()
