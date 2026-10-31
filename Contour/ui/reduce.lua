@@ -311,8 +311,6 @@ function M.draw(ctx, state, detected)
 
   if gesture.open and state.op ~= "reduce" then endGesture(true) end
 
-  theme.sectionHeader(ctx, "Reduce points")
-
   do
     local rv, v = reaper.ImGui_Checkbox(ctx, "Live##red_live", g.live)
     if rv then g.live = v; if not g.live then endGesture(true) end end

@@ -106,17 +106,18 @@ local lastDrawErr  -- throttles the panel-error console message to once per dist
 
 -- Smooth in-panel scrolling. ImGui's wheel scroll snaps in discrete steps, which reads as choppy; instead
 -- we keep a target scroll position and EASE the real scroll toward it each frame, so the wheel glides.
--- The window gets WindowFlags_NoScrollWithMouse so ImGui stops snapping; we drive ScrollY ourselves. All
--- scroll APIs are guarded — on an older ReaImGui without them, SMOOTH_OK is false and default wheel
--- scrolling is left on.
+-- What scrolls is the shell's ##contour_body CHILD window (the header and Generate's footer stay put), so
+-- the child gets WindowFlags_NoScrollWithMouse (shell does that when opts.noWheel is set) so ImGui stops
+-- snapping; we drive the child's ScrollY ourselves. All scroll APIs are guarded — on an older ReaImGui
+-- without them, SMOOTH_OK is false and default wheel scrolling is left on.
 local SMOOTH_OK = reaper.ImGui_GetScrollY and reaper.ImGui_SetScrollY and reaper.ImGui_GetScrollMaxY
   and reaper.ImGui_GetMouseWheel and reaper.ImGui_WindowFlags_NoScrollWithMouse
 local SCROLL_STEP = 120    -- pixels of travel per wheel notch (more = faster traversal)
 local SCROLL_EASE = 0.50   -- 0..1 glide toward the target each frame (higher = snappier/less lag; ~32fps cap)
 local scrollTarget, scrollApplied   -- target Y, and the Y we set last frame (to detect external scrolls)
 
--- Call right after ImGui_Begin (window must be current; runs before content is laid out so the scroll
--- applies this frame). No-op without the APIs.
+-- Called by shell right after ImGui_BeginChild (the body child must be current; runs before its content is
+-- laid out so the scroll applies this frame). No-op without the APIs.
 local function smoothScroll()
   if not SMOOTH_OK then return end
   local maxY = reaper.ImGui_GetScrollMaxY(ctx)
@@ -145,6 +146,10 @@ local function smoothScroll()
   reaper.ImGui_SetScrollY(ctx, newY)
   scrollApplied = newY
 end
+
+-- Handed to shell.draw: it calls scroll() inside the body child, and noWheel tells it to stop the child's own
+-- (snapping) wheel scroll because smoothScroll drives it.
+local shellOpts = { scroll = smoothScroll, noWheel = SMOOTH_OK and true or false }
 
 local function loop()
   local ok, detected = pcall(context.detect)
@@ -176,22 +181,27 @@ local function loop()
   local sizeCond = (reaper.ImGui_Cond_Once and reaper.ImGui_Cond_Once())
     or (reaper.ImGui_Cond_FirstUseEver and reaper.ImGui_Cond_FirstUseEver()) or 0
   reaper.ImGui_SetNextWindowSize(ctx, 460, math.min(1050, maxH), sizeCond)
-  local beginFlags = SMOOTH_OK and reaper.ImGui_WindowFlags_NoScrollWithMouse() or 0
-  -- ALWAYS show the vertical scrollbar: Generate is tall (scrolls) while Reduce/Transform are short,
-  -- so an auto scrollbar popped in/out on op switch and the content width jumped (a visible glitch).
-  -- A permanent scrollbar keeps the width stable across tabs.
-  if reaper.ImGui_WindowFlags_AlwaysVerticalScrollbar then
-    beginFlags = beginFlags | reaper.ImGui_WindowFlags_AlwaysVerticalScrollbar()
+  -- The OUTER window never scrolls: the header and Generate's footer stay pinned, and the shell's body
+  -- child (which has its own always-on scrollbar, so the content width is stable across ops) does the
+  -- scrolling instead.
+  local beginFlags = 0
+  if reaper.ImGui_WindowFlags_NoScrollbar then
+    beginFlags = beginFlags | reaper.ImGui_WindowFlags_NoScrollbar()
+  end
+  if reaper.ImGui_WindowFlags_NoScrollWithMouse then
+    beginFlags = beginFlags | reaper.ImGui_WindowFlags_NoScrollWithMouse()
   end
   local visible, open = reaper.ImGui_Begin(ctx, "Contour", true, beginFlags)
   if visible then
-    smoothScroll()   -- ease the wheel scroll (set before content is laid out this frame)
     theme.pushFont(ctx)
     -- A panel throw must NOT brick the window. pcall keeps the outer Begin/End balanced (End always runs)
     -- and the defer loop alive; the error is surfaced once per distinct message instead of dying silently
-    -- or spamming the console every frame. (The panels use no BeginChild/Table/TreeNode, so a caught throw
-    -- can't leave the ImGui stack unbalanced here.)
-    local okDraw, drawErr = pcall(shell.draw, ctx, state, detected)
+    -- or spamming the console every frame. The shell DOES use BeginChild (the scrolling body) and the
+    -- Generate panel BeginTable: Dear ImGui requires EndChild after EVERY BeginChild (and EndTable after a
+    -- BeginTable that returned true), so each of those runs its contents in its own pcall, ends the
+    -- child/table unconditionally and then re-raises (see shell.draw / generate.drawBody). A caught throw
+    -- therefore leaves the ImGui stack balanced here, and is reported below.
+    local okDraw, drawErr = pcall(shell.draw, ctx, state, detected, shellOpts)
     theme.popFont(ctx)
     reaper.ImGui_End(ctx)
     if not okDraw and drawErr ~= lastDrawErr then

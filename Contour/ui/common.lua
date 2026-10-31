@@ -10,6 +10,13 @@ M.SCOPE_ITEMS = ""
 for _, s in ipairs(M.SCOPE_MODES) do M.SCOPE_ITEMS = M.SCOPE_ITEMS .. s .. "\0" end
 M.SCOPE_TIMESEL, M.SCOPE_ENTIRE = 0, 1
 
+-- Two-column layout: a panel lays its lower sections out side by side once its content region is at
+-- least this wide (px). Pure width check, so the threshold is unit-tested without ImGui.
+M.TWO_COL_MIN_W = 600
+function M.useTwoColumns(availW)
+  return type(availW) == "number" and availW >= M.TWO_COL_MIN_W
+end
+
 -- Resolve the write span (project seconds) from g.scope. Entire-item uses the target's fullSpan()
 -- (CC item bounds, an automation item's own bounds, or a take envelope's item bounds); TRACK envelopes
 -- are time-selection only (they have no item). Automation items, take envelopes AND MIDI CC clamp the

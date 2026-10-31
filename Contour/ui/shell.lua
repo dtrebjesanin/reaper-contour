@@ -1,7 +1,11 @@
 -- ui/shell.lua — top-level shell: operation switcher (Generate/Reduce/Transform) + shared
--- target tabs (Envelope/Automation Item/MIDI CC) + the active operation's body.
+-- target tabs (Envelope/Automation Item/MIDI CC) + one context line + the active operation's body.
 -- The active tab follows the detected context (edge-triggered) unless the user clicks a tab,
--- and can be toggled off via "Follow selection".
+-- and can be toggled off via the "Follow" checkbox on the context line.
+--
+-- Layout: the header (switcher, tabs, context line) is drawn in the outer window and never scrolls. The
+-- op's body is drawn inside the ##contour_body child, which scrolls. Generate also has a footer (Live /
+-- Generate / Reset / hints / status) drawn BELOW the child, pinned; the child is sized to leave room for it.
 local M = {}
 
 local generate        = require("ui.generate")
@@ -68,7 +72,59 @@ local function targetTabs(ctx, state)
   state.forceTarget = nil   -- one-frame pulse
 end
 
-function M.draw(ctx, state, detected)
+-- Row 3: ONE context line — what was detected, the time selection (dim) or the no-selection hint, and
+-- the Follow toggle pinned to the right edge of the same line.
+local function contextLine(ctx, state, detected)
+  -- Measure BEFORE drawing: the row's left edge and the full width available to it give the right edge.
+  local x0 = reaper.ImGui_GetCursorPosX and reaper.ImGui_GetCursorPosX(ctx)
+  local availW = reaper.ImGui_GetContentRegionAvail and select(1, reaper.ImGui_GetContentRegionAvail(ctx))
+
+  reaper.ImGui_Text(ctx, detected.label)
+  reaper.ImGui_SameLine(ctx)
+  if detected.hasTimeSel then
+    reaper.ImGui_TextColored(ctx, theme.C.textDim, ("%.3f .. %.3f s"):format(detected.t0, detected.t1))
+  else
+    reaper.ImGui_TextColored(ctx, 0xC0A040FF, "No time selection")
+  end
+
+  -- Right-align the checkbox: content width minus the checkbox's own width (square + inner spacing + label).
+  -- Never left of where the text ended; if any geometry call is missing the plain SameLine is the fallback.
+  reaper.ImGui_SameLine(ctx)
+  if reaper.ImGui_SetCursorPosX and reaper.ImGui_GetCursorPosX and reaper.ImGui_GetFrameHeight
+     and reaper.ImGui_CalcTextSize and type(x0) == "number" and type(availW) == "number" then
+    local boxH = reaper.ImGui_GetFrameHeight(ctx)
+    local textW = reaper.ImGui_CalcTextSize(ctx, "Follow")
+    if type(boxH) == "number" and type(textW) == "number" then
+      local innerSpacing = 6   -- ItemInnerSpacing.x (ui/theme)
+      local x = x0 + availW - (boxH + innerSpacing + textW)
+      local curX = reaper.ImGui_GetCursorPosX(ctx)
+      if type(curX) == "number" and x < curX then x = curX end
+      reaper.ImGui_SetCursorPosX(ctx, x)
+    end
+  end
+  local rv, follow = reaper.ImGui_Checkbox(ctx, "Follow##follow", state.follow)
+  if rv then state.follow = follow end
+end
+
+-- Footer height guess for the very first Generate frame, before drawFooter has been measured: about two
+-- rows (the Live/Generate/Reset row plus a hint or status line) and a little spacing.
+local function estimateFooterH(ctx)
+  local rowH = reaper.ImGui_GetFrameHeightWithSpacing and reaper.ImGui_GetFrameHeightWithSpacing(ctx)
+  if type(rowH) ~= "number" then rowH = 34 end   -- frame height + item spacing at the theme's metrics
+  return 2 * rowH + 8
+end
+
+local function winFlag(name)
+  local fn = reaper[name]
+  return fn and fn() or 0
+end
+
+-- opts (optional, from contour.lua): { scroll = fn, noWheel = bool }.
+--   scroll  — the smooth-scroll step; called right after BeginChild, so it acts on the body child.
+--   noWheel — true when scroll() drives the wheel itself, so the child must not also scroll with it.
+function M.draw(ctx, state, detected, opts)
+  opts = opts or {}
+
   -- Edge-triggered follow: snap the tab to the detected target only when the detection changes,
   -- so manual tab clicks aren't yanked back every frame.
   if state.follow and detected.target and detected.target ~= state.lastDetected then
@@ -80,31 +136,53 @@ function M.draw(ctx, state, detected)
   reaper.ImGui_Separator(ctx)
   targetTabs(ctx, state)
   reaper.ImGui_Separator(ctx)
-
-  local rv, follow = reaper.ImGui_Checkbox(ctx, "Follow selection", state.follow)
-  if rv then state.follow = follow end
-
-  -- Info block: dim labels, bright values — scannable without shouting.
-  reaper.ImGui_TextColored(ctx, theme.C.textDim, "Detected:")
-  reaper.ImGui_SameLine(ctx)
-  reaper.ImGui_Text(ctx, detected.label)
-  if detected.hasTimeSel then
-    reaper.ImGui_TextColored(ctx, theme.C.textDim, "Time selection:")
-    reaper.ImGui_SameLine(ctx)
-    reaper.ImGui_Text(ctx, ("%.3f .. %.3f s"):format(detected.t0, detected.t1))
-  else
-    reaper.ImGui_TextColored(ctx, 0xC0A040FF, "No time selection")
-  end
-  reaper.ImGui_TextColored(ctx, theme.C.textDim, ("Operation: %s    Active tab: %s"):format(state.op, state.target))
+  contextLine(ctx, state, detected)
   reaper.ImGui_Separator(ctx)
 
-  -- Operation body.
-  if state.op == "generate" then
-    generate.draw(ctx, state, detected)
-  elseif state.op == "reduce" then
-    reduce.draw(ctx, state, detected)
-  else
-    transform_panel.draw(ctx, state)
+  -- Scrolling body. Only Generate has a footer; for Reduce / Transform the child fills the rest of the
+  -- window (height 0). A negative height means "the remaining space minus this much", so -footerH leaves
+  -- exactly the footer's room below the child.
+  local hasFooter = state.op == "generate"
+  local footerH = hasFooter and (state.footerH or estimateFooterH(ctx)) or 0
+  -- Always show the child's scrollbar: Generate is tall (scrolls) while Reduce / Transform are short, and
+  -- an auto scrollbar popping in and out on op switch made the content width jump.
+  local childFlags = winFlag("ImGui_WindowFlags_AlwaysVerticalScrollbar")
+  if opts.noWheel then childFlags = childFlags | winFlag("ImGui_WindowFlags_NoScrollWithMouse") end
+
+  -- The theme's ChildBg is a shade lighter than WindowBg; the body child should blend into the window around
+  -- it, so draw it transparent. The colour is read when the child begins, so pop it right after BeginChild.
+  local pushedBg = 0
+  if reaper.ImGui_PushStyleColor and reaper.ImGui_Col_ChildBg then
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ChildBg(), 0x00000000)
+    pushedBg = 1
+  end
+  -- Arg 5 is `border` (bool) in ReaImGui 0.8 but `child_flags` (int) from 0.9 — nil is valid for both;
+  -- arg 6 (window flags) means the same in both.
+  reaper.ImGui_BeginChild(ctx, "##contour_body", 0, -footerH, nil, childFlags)
+  if pushedBg > 0 then reaper.ImGui_PopStyleColor(ctx, pushedBg) end
+  -- EndChild is required after EVERY BeginChild, whatever it returned, and contour.lua's pcall around this
+  -- function would swallow a throw and leave the child open. So the body runs in its own pcall, EndChild
+  -- always follows, and the error is re-raised afterwards (contour.lua still reports it).
+  local ok, err = pcall(function()
+    if opts.scroll then opts.scroll() end
+    if state.op == "generate" then
+      generate.drawBody(ctx, state, detected)
+    elseif state.op == "reduce" then
+      reduce.draw(ctx, state, detected)
+    else
+      transform_panel.draw(ctx, state)
+    end
+  end)
+  reaper.ImGui_EndChild(ctx)
+  if not ok then error(err, 0) end
+
+  -- Pinned footer, in the outer window. Measure it every frame (cursor Y before/after, which includes the
+  -- trailing item spacing) so the child above always leaves exactly the right amount of room.
+  if hasFooter then
+    local y0 = reaper.ImGui_GetCursorPosY and reaper.ImGui_GetCursorPosY(ctx)
+    generate.drawFooter(ctx, state, detected)
+    local y1 = reaper.ImGui_GetCursorPosY and reaper.ImGui_GetCursorPosY(ctx)
+    if type(y0) == "number" and type(y1) == "number" and y1 - y0 > 0 then state.footerH = y1 - y0 end
   end
 end
 

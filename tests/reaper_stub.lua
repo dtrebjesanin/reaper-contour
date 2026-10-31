@@ -33,11 +33,17 @@ local function noop() return nil end
 -- readScope finds a "Selected points" region and reaches bounds()/the transform math.
 M.CC_LANE = 1   -- the active CC lane the read fixtures live on (matches MIDIEditor_GetSetting_int)
 M.PPQ = 100     -- ppq per second (MIDI_GetPPQPosFromProjTime scale below)
+-- Content-region width ImGui_GetContentRegionAvail reports (the panels pick one vs two columns from it).
+-- reset() deliberately does NOT touch it: a test that changes it sets it and restores it (360) itself.
+M.AVAIL_W = 360
 
 function M.reset()
   M.rec = {
     ins = {}, insEx = {}, delRange = {}, delRangeEx = {},
     sort = 0, sortEx = 0, ccIns = 0, setAllEvts = 0, extState = {}, undoBlocks = 0, msgs = {},
+    -- Begin/End pairing counters: every BeginChild needs an EndChild whatever it returns; EndTable only
+    -- follows a BeginTable that returned true (the stub always does). Tests assert begin == end.
+    childBegin = 0, childEnd = 0, tableBegin = 0, tableEnd = 0,
   }
   M.envPoints = {
     { time = 0.0, value = -0.5, shape = 0, tension = 0, sel = true },
@@ -86,7 +92,13 @@ local R = {}
 -- ---- ImGui geometry: layout math divides by / offsets from these, so they MUST be numbers ----------
 R.ImGui_GetMousePos           = function() return 100, 100 end
 R.ImGui_GetCursorScreenPos    = function() return 10, 10 end
-R.ImGui_GetContentRegionAvail = function() return 360, 240 end
+R.ImGui_GetContentRegionAvail = function() return M.AVAIL_W, 240 end
+R.ImGui_GetCursorPosX         = function() return 14 end     -- window-space cursor (shell header / footer maths)
+R.ImGui_GetCursorPosY         = function() return 100 end
+R.ImGui_GetFrameHeight        = function() return 24 end
+R.ImGui_GetFrameHeightWithSpacing = function() return 32 end
+R.ImGui_GetTextLineHeightWithSpacing = function() return 22 end
+R.ImGui_CalcTextSize          = function(_ctx, s) return #tostring(s) * 7, 14 end
 R.ImGui_GetItemRectMin        = function() return 10, 10 end
 R.ImGui_GetItemRectMax        = function() return 350, 30 end
 R.ImGui_CalcItemWidth         = function() return 300 end
@@ -113,12 +125,15 @@ R.ImGui_Checkbox     = echo
 R.ImGui_Combo        = echo
 
 -- ---- Begin*/tab gating: return true so the conditional bodies run (max coverage) ------------------
--- End*/EndTabItem/EndCombo are no-ops via the catch-all; the stub does not enforce ImGui stack pairing.
+-- End*/EndTabItem/EndCombo are no-ops via the catch-all; EndChild/EndTable are COUNTED (rec.childEnd/tableEnd) so tests can assert pairing.
 R.ImGui_Begin        = function() return true, true end   -- (visible, open)
 R.ImGui_BeginCombo   = function() return true end
 R.ImGui_BeginTabBar  = function() return true end
 R.ImGui_BeginTabItem = function() return true end
-R.ImGui_BeginChild   = function() return true end
+R.ImGui_BeginChild   = function() M.rec.childBegin = M.rec.childBegin + 1; return true end
+R.ImGui_EndChild     = function() M.rec.childEnd = M.rec.childEnd + 1 end
+R.ImGui_BeginTable   = function() M.rec.tableBegin = M.rec.tableBegin + 1; return true end
+R.ImGui_EndTable     = function() M.rec.tableEnd = M.rec.tableEnd + 1 end
 R.ImGui_BeginPopup   = function() return true end
 R.ImGui_BeginPopupModal = function() return true end
 

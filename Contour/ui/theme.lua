@@ -129,22 +129,37 @@ end
 M.C = C
 
 -- Section header: a small breather, the label in the accent tint, and a hairline running from the
--- label to the window's right edge. Pure DrawList + Text — no stateful widgets (no BeginChild/tree),
--- so the panels' balanced-ImGui-stack safety invariant is untouched. Guarded: degrades to plain text.
+-- label to the right edge of the space it sits in (the window's content region, or one table column).
+-- Pure DrawList + Text — no stateful widgets (no BeginChild/tree), so the panels' balanced-ImGui-stack
+-- safety invariant is untouched. Guarded: degrades to plain text.
 function M.sectionHeader(ctx, label)
   if reaper.ImGui_Dummy then reaper.ImGui_Dummy(ctx, 1, 3) end
+  -- The line must end where the AVAILABLE space ends, not at the window edge: inside a table column the
+  -- window edge would run the hairline into the next column. Read both BEFORE the text moves the cursor.
+  local x0, availW
+  if reaper.ImGui_GetCursorScreenPos and reaper.ImGui_GetContentRegionAvail then
+    x0 = reaper.ImGui_GetCursorScreenPos(ctx)
+    availW = reaper.ImGui_GetContentRegionAvail(ctx)
+  end
   if reaper.ImGui_TextColored then reaper.ImGui_TextColored(ctx, C.accentH, label)
   else reaper.ImGui_Text(ctx, label) end
   if reaper.ImGui_GetItemRectMin and reaper.ImGui_GetItemRectMax and reaper.ImGui_GetWindowDrawList
-     and reaper.ImGui_DrawList_AddLine and reaper.ImGui_GetWindowPos and reaper.ImGui_GetWindowSize then
+     and reaper.ImGui_DrawList_AddLine then
     local _, y0 = reaper.ImGui_GetItemRectMin(ctx)
     local x1, y1 = reaper.ImGui_GetItemRectMax(ctx)
-    local wx = reaper.ImGui_GetWindowPos(ctx)
-    local ww = reaper.ImGui_GetWindowSize(ctx)
-    if x1 and y0 and y1 and wx and ww then
+    local xEnd
+    if type(x0) == "number" and type(availW) == "number" then
+      xEnd = x0 + availW
+    elseif reaper.ImGui_GetWindowPos and reaper.ImGui_GetWindowSize then
+      -- Fallback (no cursor/avail APIs): the window's right edge, stopping short of the scrollbar.
+      local wx = reaper.ImGui_GetWindowPos(ctx)
+      local ww = reaper.ImGui_GetWindowSize(ctx)
+      if wx and ww then xEnd = wx + ww - 26 end
+    end
+    if x1 and y0 and y1 and xEnd then
       local cy = math.floor((y0 + y1) / 2) + 1
       reaper.ImGui_DrawList_AddLine(reaper.ImGui_GetWindowDrawList(ctx),
-        x1 + 8, cy, wx + ww - 26, cy, 0x323A4480, 1)   -- sep tint at half alpha; stops short of the scrollbar
+        x1 + 8, cy, xEnd, cy, 0x323A4480, 1)   -- sep tint at half alpha
     end
   end
 end
