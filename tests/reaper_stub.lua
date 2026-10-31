@@ -52,7 +52,15 @@ function M.reset()
     popupBegin = 0, popupEnd = 0,
     -- And tab bars: EndTabBar only follows a BeginTabBar that returned true (the stub always does).
     tabBarBegin = 0, tabBarEnd = 0,
+    -- SetCursorContext(mode, env) calls, in order: each entry { mode, env, mode = mode, env = env }.
+    cursorCtx = {},
   }
+  -- Razor-area fixtures: tracks in project order, each { handle, name, razor, envs = { {handle, guid, name} } },
+  -- plus the master track. razor is the raw P_RAZOREDITS string; mouseState is JS_Mouse_GetState(1)
+  -- (bit 1 = left button down). A fresh stub has no tracks, so context.detect() finds no razor areas.
+  M.tracks = {}
+  M.master = { handle = "MASTER", razor = "", envs = {} }
+  M.mouseState = 0
   M.envPoints = {
     { time = 0.0, value = -0.5, shape = 0, tension = 0, sel = true },
     { time = 2.0, value =  0.6, shape = 0, tension = 0, sel = true },
@@ -93,6 +101,24 @@ function M.ccOnLane(lane)
   for _, e in ipairs(M.ccList) do if e.lane == lane then out[#out + 1] = e end end
   table.sort(out, function(a, b) return a.ppq < b.ppq end)
   return out
+end
+
+-- Fixture lookups for the razor/track API: the track (or M.master) a handle names, and the envelope
+-- fixture (plus its track) a handle names.
+local function findTrack(handle)
+  if handle == M.master.handle then return M.master end
+  for _, t in ipairs(M.tracks) do if t.handle == handle then return t end end
+end
+local function findEnv(handle)
+  local function scan(t)
+    for _, e in ipairs(t.envs or {}) do if e.handle == handle then return t, e end end
+  end
+  local t, e = scan(M.master)
+  if t then return t, e end
+  for _, tr in ipairs(M.tracks) do
+    t, e = scan(tr)
+    if t then return t, e end
+  end
 end
 
 local R = {}
@@ -158,6 +184,42 @@ R.GetThemeColor   = function(key) local v = M.themeColors[key]; if v == nil then
 R.ColorFromNative = function(n) return n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF end
 R.time_precise    = function() return M.now end
 
+-- ---- Tracks, track envelopes, razor areas (core/context.lua) ---------------------------------------------
+-- Driven by M.tracks / M.master (see reset()). An unknown handle reads as (false, ""), like a failed
+-- REAPER call. Writes (set == true) land in the fixture so a test can read them back.
+R.GetMasterTrack = function() return M.master.handle end
+R.CountTracks    = function() return #M.tracks end
+R.GetTrack       = function(_proj, i) local t = M.tracks[i + 1]; return t and t.handle or nil end
+R.GetSetMediaTrackInfo_String = function(tr, key, val, set)
+  local t = findTrack(tr)
+  if not t then return false, "" end
+  if key == "P_RAZOREDITS" then
+    if set then t.razor = val end
+    return true, t.razor or ""
+  elseif key == "P_NAME" then
+    if set then t.name = val end
+    return true, t.name or ""
+  end
+  return false, ""
+end
+R.CountTrackEnvelopes = function(tr) local t = findTrack(tr); return t and #(t.envs or {}) or 0 end
+R.GetTrackEnvelope    = function(tr, i)
+  local t = findTrack(tr)
+  local e = t and t.envs and t.envs[i + 1]
+  return e and e.handle or nil
+end
+R.GetSetEnvelopeInfo_String = function(env, key, _val, _set)
+  local _, e = findEnv(env)
+  if e and key == "GUID" then return true, e.guid end
+  return false, ""
+end
+-- SetCursorContext(2, env) selects an envelope in REAPER; the stub only records the call.
+R.SetCursorContext = function(mode, env)
+  M.rec.cursorCtx[#M.rec.cursorCtx + 1] = { mode, env, mode = mode, env = env }
+end
+-- js_ReaScriptAPI: bit 1 of JS_Mouse_GetState(1) is the left button.
+R.JS_Mouse_GetState = function() return M.mouseState end
+
 -- ---- ExtState: return "" so preset/store decoders see "nothing saved" cleanly --------------------
 R.GetExtState = function(_sec, key) return M.rec.extState[key] or "" end
 R.SetExtState = function(_sec, key, val) M.rec.extState[key] = val end
@@ -170,7 +232,10 @@ R.ShowMessageBox = function() return 0 end
 
 -- ---- Value range (envelope): "Pan", scaling mode 0 => target gives [-1,1] -------------------------
 R.GetEnvelopeScalingMode = function() return 0 end
-R.GetEnvelopeName        = function() return true, "Pan" end
+R.GetEnvelopeName        = function(env)
+  local _, e = findEnv(env)
+  return true, (e and e.name) or "Pan"   -- a fixture envelope reports its own name
+end
 R.ScaleToEnvelopeMode    = function(_m, v) return v end
 R.ScaleFromEnvelopeMode  = function(_m, v) return v end
 
@@ -220,7 +285,10 @@ R.Envelope_SortPointsEx = function() M.rec.sortEx = M.rec.sortEx + 1 end
 
 -- ---- Envelope geometry (overlay laneRect) --------------------------------------------------------
 R.GetEnvelopeInfo_Value = function(env, key)
-  if key == "P_TRACK" then return "TRACK" end        -- truthy pointer (passed to GetMediaTrackInfo_Value)
+  if key == "P_TRACK" then                           -- truthy pointer (passed to GetMediaTrackInfo_Value)
+    local t = findEnv(env)
+    return t and t.handle or "TRACK"
+  end
   if env == "TENV" then                              -- take envelope: its OWN strip within the item
     if key == "I_TCPY_USED" then return 25 end
     if key == "I_TCPH_USED" then return 30 end
