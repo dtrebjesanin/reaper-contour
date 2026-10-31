@@ -15,6 +15,9 @@
 -- of the last changed razor string, finds that envelope and calls SetCursorContext(2, env). It prints
 -- GetSelectedEnvelope(0) == env right after and 0.1 s later. The foreground and focus windows are read
 -- right before the call, right after it and 0.1 s later (needs js_ReaScriptAPI). Watch the Contour window.
+-- It also answers (e): does an automation item on that envelope stay selected? Select one on the target
+-- envelope first; the console says whether any automation item on it is selected before the selection is
+-- cleared, before SetCursorContext(2, env) and right after it.
 local MODE = "dump" -- "dump" or "select"
 local INTERVAL = 0.1
 local SETTLE = 1.0 -- seconds without a razor change before select mode goes on
@@ -57,6 +60,15 @@ local function findEnv(guid)
   return found
 end
 
+-- (e): is any automation item on env selected? "n/a" without the API, else "yes (#i)" or "no".
+local function aiSel(env)
+  if not (reaper.CountAutomationItems and reaper.GetSetAutomationItemInfo) then return "n/a" end
+  for i = 0, reaper.CountAutomationItems(env) - 1 do
+    if reaper.GetSetAutomationItemInfo(env, i, "D_UISEL", 0, false) > 0 then return "yes (#" .. i .. ")" end
+  end
+  return "no"
+end
+
 local function windows()
   if not (reaper.JS_Window_GetForeground and reaper.JS_Window_GetFocus) then return {} end
   return { fg = reaper.JS_Window_GetForeground(), fo = reaper.JS_Window_GetFocus() }
@@ -74,6 +86,7 @@ local function trySelect(guid)
   local env = findEnv(guid)
   if not env then out("  envelope " .. guid .. " not found") return end
   local base = windows()
+  out("  automation item selected on env, before the clear: " .. aiSel(env))
   reaper.SetCursorContext(2, nil)
   out("  cleared selection -> GetSelectedEnvelope(0): " .. guidOf(reaper.GetSelectedEnvelope(0)) .. " (expected none)")
   local pre = windows()
@@ -81,7 +94,9 @@ local function trySelect(guid)
     out(("  before select: foreground is REAPER main window: %s (expected false after your click)  clear changed foreground/focus: %s")
       :format(tostring(pre.fg == reaper.GetMainHwnd()), tostring(pre.fg ~= base.fg or pre.fo ~= base.fo)))
   end
+  out("  automation item selected on env, before SetCursorContext(2, env): " .. aiSel(env))
   reaper.SetCursorContext(2, env)
+  out("  automation item selected on env, after SetCursorContext(2, env): " .. aiSel(env))
   out("  SetCursorContext(2, env) -> GetSelectedEnvelope(0) == env: " .. tostring(reaper.GetSelectedEnvelope(0) == env))
   reportWindows("right after", pre)
   pending = { env = env, pre = pre }
