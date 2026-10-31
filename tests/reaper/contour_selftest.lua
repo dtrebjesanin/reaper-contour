@@ -14,6 +14,8 @@
 --     contracts + the CC->ENV shape swap (0<->1) on a real envelope.
 --   * MIDI CC round-trip: MIDI_InsertCC + MIDI_SetCCShape + MIDI_GetCC against a real take.
 --   * AUTOMATION ITEM round-trip: the *Ex point family + item-bounds handling.
+--   * RAZOR AREA round-trip: P_RAZOREDITS on a Volume lane -> context.detect() -> Generate writes only
+--     inside the razor span.
 --
 -- This is NOT part of the shipped package (it lives under tests/, not in contour.lua's @provides).
 
@@ -106,6 +108,73 @@ suite("envelope: CC->ENV shape swap (0<->1) on a real envelope", function()
   table.sort(rb, function(a, b) return a.time < b.time end)
   check(rb[1].shape == 1, "CC square(0) should store as ENV 1, got " .. tostring(rb[1].shape))
   check(rb[2].shape == 0, "CC linear(1) should store as ENV 0, got " .. tostring(rb[2].shape))
+end)
+
+-- ---- RAZOR AREA round-trip -----------------------------------------------------------------------
+-- A razor area on the target envelope's lane is the range for Generate (it beats the time selection).
+-- Covers what stubs can lie about: the live P_RAZOREDITS string REAPER stores, the envelope GUID that
+-- string must name, context.detect() resolving the selected envelope's lane to it, and Generate writing
+-- only inside the razor span. Uses the track's Volume envelope; the lane's razor is always cleared after.
+suite("razor area: detect + Generate write only inside the razor span (Volume lane)", function()
+  local okCtx, context  = pcall(require, "core.context")
+  local okGen, generate = pcall(require, "ui.generate")
+  check(okCtx,  "could not load core.context: " .. tostring(context))
+  check(okGen,  "could not load ui.generate: " .. tostring(generate))
+
+  -- 1. the track's Volume envelope, visible
+  reaper.SetOnlyTrackSelected(track)
+  local env = reaper.GetTrackEnvelopeByName(track, "Volume")
+  if not env then
+    reaper.Main_OnCommand(40406, 0)  -- Track: Toggle track volume envelope visible
+    env = reaper.GetTrackEnvelopeByName(track, "Volume")
+  end
+  check(env, "could not create a Volume envelope (action 40406 may differ on this REAPER build)")
+  reaper.DeleteEnvelopePointRange(env, -1, 1e6)   -- start from an empty lane so every point is Generate's
+
+  -- 2. its GUID
+  local okGuid, guid = reaper.GetSetEnvelopeInfo_String(env, "GUID", "", false)
+  check(okGuid and guid and guid ~= "", "GetSetEnvelopeInfo_String(GUID) returned nothing")
+
+  local function clearRazor() reaper.GetSetMediaTrackInfo_String(track, "P_RAZOREDITS", "", true) end
+  local okRun, err = pcall(function()
+    -- 3. a razor area 1..2 s on that lane
+    local razor = ('1.0 2.0 "%s"'):format(guid)
+    reaper.GetSetMediaTrackInfo_String(track, "P_RAZOREDITS", razor, true)
+    local _, stored = reaper.GetSetMediaTrackInfo_String(track, "P_RAZOREDITS", "", false)
+    check(stored and stored:find(guid, 1, true), "REAPER did not store the razor area (read back: " .. tostring(stored) .. ")")
+
+    -- 4. select the envelope; detect() must report the razor as the range source
+    reaper.SetCursorContext(2, env)
+    if context.engageArrange then context.engageArrange() end   -- a lingering MIDI editor selection must not win
+    local det = context.detect()
+    check(det.target == "envelope" and det.details and det.details.env == env,
+      "detect() did not resolve the selected Volume envelope (target=" .. tostring(det.target) .. ")")
+    check(det.rangeSource == "razor", "rangeSource is " .. tostring(det.rangeSource) .. ", expected razor")
+    check(det.ranges and #det.ranges == 1, "expected exactly one razor range, got " .. tostring(det.ranges and #det.ranges))
+    check(approx(det.ranges[1][1] or det.ranges[1].t0, 1.0) and approx(det.ranges[1][2] or det.ranges[1].t1, 2.0),
+      "razor range is not 1..2")
+
+    -- 5. Generate Sine; every point lies in [1, 2]
+    local g = {
+      shapeIdx = 1,   -- Sine
+      rateMode = 1, cycles = 4, hz = 1,
+      lengthIdx = 6, feelIdx = 0, freqIdx = 8, ccNum = 1,
+      baseline = 0, amplitude = 50, tilt = 0, tiltR = 0, phase = 0,
+      ampSkew = 0, pulseWidth = 0.5, freqSkew = 0, swing = 0, seed = 1,
+      smooth = 0, steps = 0, curve = 0, attack = 50, edge = 50,
+      scope = 0,
+    }
+    generate.run({}, det, g)
+    check(not g.statusErr, "Generate failed: " .. tostring(g.status))
+    local n = reaper.CountEnvelopePoints(env)
+    check(n > 0, "Generate wrote no points on the razor lane (" .. tostring(g.status) .. ")")
+    for i = 0, n - 1 do
+      local _, tm = reaper.GetEnvelopePoint(env, i)
+      check(tm >= 1.0 - 1e-6 and tm <= 2.0 + 1e-6, ("point %d at %.4f s lies outside the razor span 1..2"):format(i, tm))
+    end
+  end)
+  clearRazor()   -- 6. never leave a razor behind, pass or fail
+  if not okRun then error(err, 0) end
 end)
 
 -- ---- MIDI CC round-trip --------------------------------------------------------------------------

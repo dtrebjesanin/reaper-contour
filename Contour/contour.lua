@@ -45,6 +45,7 @@
 --   [nomain] core/genpreset.lua
 --   [nomain] core/lfo.lua
 --   [nomain] core/midistream.lua
+--   [nomain] core/razor.lua
 --   [nomain] core/reduce.lua
 --   [nomain] core/shapes.lua
 --   [nomain] core/starters.lua
