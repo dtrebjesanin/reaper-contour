@@ -3,7 +3,9 @@
 -- re-derives from it, so 0%/Reset restores the original and dialing up never compounds.
 --
 -- Three scopes:
---   * Time selection  — thin all points inside the time selection.
+--   * Time selection  — thin all points inside the time selection, or inside each razor area on the
+--                       target lane (a lane can carry several separate areas: each is thinned on its own,
+--                       the gaps between them are never touched, and the write is ONE Undo step).
 --   * Entire item     — thin the whole CC item / automation item (not for track envelopes).
 --   * Selected points — thin ONLY the points the user has selected, leaving the rest untouched.
 --
@@ -22,6 +24,14 @@ local common = require("ui.common")
 local theme  = require("ui.theme")
 
 local SCOPE_TIMESEL, SCOPE_ENTIRE, SCOPE_SELECTED = 0, 1, 2
+
+-- Hint texts for a missing range. A razor area that lies outside the target (an automation item, or a take
+-- envelope's item) is NOT "no range": it never falls back to the time selection, and says so.
+local RANGE_HINT = "Make a time selection or a razor area (or switch Scope to Entire item)."
+local function razorOutsideHint(detected)
+  if detected and detected.target == "ai" then return "The razor area is outside this automation item" end
+  return "The razor area is outside this item"
+end
 
 -- Reduction slider (0..100 %) -> RDP tolerance as a fraction of the value range (span-invariant; see
 -- core/reduce). Quadratic for fine control at the low end: 100% -> 0.5, 50% -> 0.125, 10% -> ~0.005.
@@ -53,11 +63,18 @@ local function undoMetaFor(t)
   return -1, "Contour: Reduce envelope"
 end
 
--- The active working set for the current interaction: base.orig = the PRE-REDUCE original points within
--- the working span [t0,t1] (a slice of the whole-lane original). reducedAt thins it; Reset (0%) writes it
--- back verbatim. tgt/snapshot are volatile and refreshed on every fresh interaction.
-local base = { key = nil, tgt = nil, snapshot = nil, orig = nil, origCount = 0,
-               t0 = nil, t1 = nil, selectedMode = false }
+-- The active working set for the current interaction: base.regions = one entry per working span,
+--   { t0, t1, orig, origCount }, where orig is the PRE-REDUCE original points within [t0,t1] (a slice of
+-- the whole-lane original). reducedAt thins each region on its own; Reset (0%) writes it back verbatim.
+-- The range scopes get one region per span (several razor areas = several regions); Selected points is
+-- always one region. base.origCount is the sum over the regions. tgt/snapshot are volatile and refreshed on
+-- every fresh interaction.
+local base = { key = nil, tgt = nil, snapshot = nil, regions = nil, origCount = 0, selectedMode = false }
+local function newRegion(t0, t1, orig) return { t0 = t0, t1 = t1, orig = orig, origCount = #orig } end
+local function setRegions(list)
+  base.regions, base.origCount = list, 0
+  for _, r in ipairs(list) do base.origCount = base.origCount + r.origCount end
+end
 local gesture = { open = false, undoFlag = 4, undoLabel = "Contour: Reduce" }
 
 -- Per-TARGET baseline store (NOT per-span): keyed by lane identity, each entry keeps the WHOLE-lane
@@ -81,7 +98,7 @@ local function regionOf(all, a, b)
 end
 
 -- Clone `region` points, tagging each `sel` from a selected-time set keyed by "%.6f". Used by selected
--- scope so base.orig carries the ORIGINAL selection (the points the user picked), independent of whatever
+-- scope so a region's orig carries the ORIGINAL selection (the points the user picked), independent of whatever
 -- is selected on the lane right now (a prior reduce leaves only the survivors selected).
 local function tagSelected(region, selSet)
   local out = {}
@@ -106,15 +123,23 @@ local function pointsMatch(cur, ref)
   return true
 end
 
--- Resolve the pristine whole-lane original for `key`, given the working span [a,b] and the current lane
--- read `all`. PRESERVE the stored original (bumping its LRU slot) when the lane region [a,b] still holds
--- our last reduce output — this is scope-INDEPENDENT, so it survives op-switch, span/scope changes, AND a
--- Time->Selected scope switch. Otherwise capture `all` as the new original. Returns (whole, storedEntry).
-local function resolveWhole(key, all, a, b)
+-- Resolve the pristine whole-lane original for `key`, given the working spans `spans` ({ {a,b}, ... }) and
+-- the current lane read `all`. PRESERVE the stored original (bumping its LRU slot) when EVERY span still
+-- holds our last reduce output — this is scope-INDEPENDENT, so it survives op-switch, span/scope changes,
+-- AND a Time->Selected scope switch. One span edited from outside is enough to re-baseline, because the
+-- stored original would otherwise overwrite that edit. Otherwise capture `all` as the new original.
+-- Returns (whole, storedEntry).
+local function resolveWhole(key, all, spans)
   local e = store[key]
-  if e and e.whole and e.written and pointsMatch(regionOf(all, a, b), regionOf(e.written, a, b)) then
-    bumpLRU(key)
-    return e.whole, e
+  if e and e.whole and e.written then
+    local ours = true
+    for _, s in ipairs(spans) do
+      if not pointsMatch(regionOf(all, s[1], s[2]), regionOf(e.written, s[1], s[2])) then ours = false; break end
+    end
+    if ours then
+      bumpLRU(key)
+      return e.whole, e
+    end
   end
   e = { whole = all, written = nil }
   setStore(key, e)
@@ -154,7 +179,7 @@ local function ensureBaseline(detected, g, gestureOpen)
   -- in the store and keep re-deriving from it for as long as the lane still holds our own output — so
   -- Reset / Curve-fit / amount changes re-reduce the ORIGINAL selection, exactly like Time-selection scope.
   if g.scope == SCOPE_SELECTED then
-    if gestureOpen and base.selectedMode and base.orig and base.tgt and base.key == key then return true end
+    if gestureOpen and base.selectedMode and base.regions and base.tgt and base.key == key then return true end
     local snap, sErr = tgt:snapshot()
     if not snap then return false, sErr or "Snapshot failed" end
     local all = tgt:read(nil, nil)
@@ -179,8 +204,8 @@ local function ensureBaseline(detected, g, gestureOpen)
 
     if ours and not newSel then
       bumpLRU(key)
-      base.t0, base.t1 = e.selSpan[1], e.selSpan[2]
-      base.orig = tagSelected(regionOf(e.whole, base.t0, base.t1), e.selTimes)
+      local t0, t1 = e.selSpan[1], e.selSpan[2]
+      setRegions({ newRegion(t0, t1, tagSelected(regionOf(e.whole, t0, t1), e.selTimes)) })
     else
       if #cur == 0 then return false, "Select some points first" end
       local selTimes, tmin, tmax = {}, nil, nil
@@ -192,59 +217,95 @@ local function ensureBaseline(detected, g, gestureOpen)
       -- Preserve the pristine original if the lane over this span is still our last output (covers a
       -- Time->Selected scope switch on an already-reduced lane); else capture the current lane. Then latch
       -- the new selection onto it.
-      local whole, prev = resolveWhole(key, all, tmin, tmax)
-      base.t0, base.t1 = tmin, tmax
-      base.orig = tagSelected(regionOf(whole, tmin, tmax), selTimes)
+      local whole, prev = resolveWhole(key, all, { { tmin, tmax } })
+      setRegions({ newRegion(tmin, tmax, tagSelected(regionOf(whole, tmin, tmax), selTimes)) })
       setStore(key, { whole = whole, written = prev and prev.written or nil, selSpan = { tmin, tmax }, selTimes = selTimes })
     end
     base.key, base.tgt, base.snapshot, base.selectedMode = key, tgt, snap, true
-    base.origCount = #base.orig
     return true
   end
 
-  -- RANGE scopes (Time selection / Entire item).
-  local st0, st1 = common.spanFor(tgt, detected, g)
-  if not (st0 and st1 and st1 > st0) then return false, "Empty range" end
-  if gestureOpen and not base.selectedMode and base.orig and base.key == key then return true end
+  -- RANGE scopes (Time selection / Entire item). A live drag keeps the latched regions (the span list is
+  -- frozen when the gesture opens, so a razor change in the middle of a drag cannot move the write).
+  if gestureOpen and not base.selectedMode and base.regions and base.key == key then return true end
+
+  -- One span per razor area (or the single time-selection / entire-item span); an empty one holds nothing.
+  local spans = {}
+  for _, s in ipairs(common.spansFor(tgt, detected, g)) do
+    if s[1] and s[2] and s[2] > s[1] then spans[#spans + 1] = s end
+  end
+  if #spans == 0 then return false, "Empty range" end
 
   local snap, sErr = tgt:snapshot()
   if not snap then return false, sErr or "Snapshot failed" end
 
-  -- Reuse the stored pristine original if the working region still holds our last reduce output (preserved
+  -- Reuse the stored pristine original if every working region still holds our last reduce output (preserved
   -- scope-independently by resolveWhole); otherwise capture the current lane as the new original.
-  local whole = resolveWhole(key, tgt:read(nil, nil), st0, st1)
-  base.key, base.tgt, base.snapshot = key, tgt, snap
-  base.t0, base.t1, base.selectedMode = st0, st1, false
-  base.orig = regionOf(whole, st0, st1)   -- the original points within the working span
-  base.origCount = #base.orig
+  local whole = resolveWhole(key, tgt:read(nil, nil), spans)
+  local regions = {}
+  for i, s in ipairs(spans) do
+    regions[i] = newRegion(s[1], s[2], regionOf(whole, s[1], s[2]))   -- the original points within that span
+  end
+  setRegions(regions)
+  base.key, base.tgt, base.snapshot, base.selectedMode = key, tgt, snap, false
   return true
 end
 
--- The points to write at the current amount. 0% restores the exact baseline. In selected scope only the
--- selected points are thinned; the unselected ones are kept verbatim and merged back.
+-- The points to write at the current amount, one job per region that holds points: { t0, t1, pts }. Each
+-- region is thinned on its own (a razor area never sees the points of another), and a region with no points
+-- has nothing to write. 0% restores the exact baseline. In selected scope only the selected points are
+-- thinned; the unselected ones are kept verbatim and merged back.
 local function reducedAt(g)
-  local pts = base.orig
-  if (g.amount or 0) <= 0 then return pts end
-  local vmin, vmax = base.tgt:valueRange()
-  local eps = amountFor(g.amount)
-  local vr = { vmin = vmin, vmax = vmax }
-  local function thin(p)
-    if g.curveFit then
-      return reduce.thinCurve(p, eps, vr, { envConvention = base.tgt:kind() ~= "cc" })
+  local thin
+  if (g.amount or 0) > 0 then
+    local vmin, vmax = base.tgt:valueRange()
+    local eps = amountFor(g.amount)
+    local vr = { vmin = vmin, vmax = vmax }
+    thin = function(p)
+      if g.curveFit then
+        return reduce.thinCurve(p, eps, vr, { envConvention = base.tgt:kind() ~= "cc" })
+      end
+      return reduce.thin(p, eps, vr)
     end
-    return reduce.thin(p, eps, vr)
   end
-  if not base.selectedMode then
-    return thin(pts)
+  local jobs = {}
+  for _, r in ipairs(base.regions) do
+    if r.origCount > 0 then
+      local out
+      if not thin then
+        out = r.orig
+      elseif not base.selectedMode then
+        out = thin(r.orig)
+      else
+        local sel, unsel = {}, {}
+        for _, p in ipairs(r.orig) do if p.sel then sel[#sel + 1] = p else unsel[#unsel + 1] = p end end
+        local keptSel = thin(sel)
+        out = {}
+        for _, p in ipairs(unsel) do out[#out + 1] = p end
+        for _, p in ipairs(keptSel) do out[#out + 1] = p end
+        table.sort(out, function(a, b) return a.time < b.time end)
+      end
+      jobs[#jobs + 1] = { t0 = r.t0, t1 = r.t1, pts = out }
+    end
   end
-  local sel, unsel = {}, {}
-  for _, p in ipairs(pts) do if p.sel then sel[#sel + 1] = p else unsel[#unsel + 1] = p end end
-  local keptSel = thin(sel)
-  local merged = {}
-  for _, p in ipairs(unsel) do merged[#merged + 1] = p end
-  for _, p in ipairs(keptSel) do merged[#merged + 1] = p end
-  table.sort(merged, function(a, b) return a.time < b.time end)
-  return merged
+  return jobs
+end
+
+-- Write every job over its own [t0,t1] (each write deletes and rewrites only that range, so writing the
+-- regions one after the other never compounds and never touches the gaps). The caller owns the Undo block,
+-- so every write is noUndo. `bulk` takes the live path (cached snapshot). Returns the number of points
+-- written over all regions, or (nil, errString) at the first failing region.
+local function writeJobs(jobs, bulk)
+  local total = 0
+  for _, j in ipairs(jobs) do
+    local opts = { noUndo = true, rawShape = true }
+    local n, e
+    if bulk then n, e = base.tgt:writeBulk(base.snapshot, j.pts, j.t0, j.t1, opts)
+    else         n, e = base.tgt:write(j.pts, j.t0, j.t1, opts) end
+    if not n then return nil, e end
+    total = total + #j.pts
+  end
+  return total
 end
 
 local function markCCDirty(tgt)
@@ -296,7 +357,7 @@ local function readyFor(detected, g)
   end
   local isTrackEnv = (t == "envelope") and not (detected.details and detected.details.take)
   local needTimeSel = (g.scope == SCOPE_TIMESEL) or isTrackEnv
-  if needTimeSel and not detected.hasTimeSel then return false end
+  if needTimeSel and not common.hasRange(detected) then return false end   -- razor area(s) or time selection
   if t == "cc" then return detected.details.take ~= nil
   elseif t == "envelope" then return detected.details.env ~= nil
   else return detected.details.env ~= nil and detected.details.aiIndex ~= nil end
@@ -306,6 +367,10 @@ function M.draw(ctx, state, detected)
   local g = ui(state)
 
   if gesture.open and state.op ~= "reduce" then endGesture(true) end
+  -- REAPER selected another envelope / item / CC lane in the middle of a drag: the open gesture belongs to
+  -- the lane it started on. End it NOW, while base still points at that lane (endGesture records the lane's
+  -- output), before ensureBaseline re-reads a baseline for the new one.
+  if gesture.open and detected and detected.details and base.key ~= targetKey(detected) then endGesture(true) end
 
   do
     local rv, v = reaper.ImGui_Checkbox(ctx, "Live##red_live", g.live)
@@ -355,8 +420,11 @@ function M.draw(ctx, state, detected)
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Select a MIDI CC lane, a track envelope, or an automation item.")
   elseif g.scope == SCOPE_SELECTED then
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Select points in the editor, then raise Reduction.")
-  elseif (g.scope == SCOPE_TIMESEL or t == "envelope") and not detected.hasTimeSel then
-    reaper.ImGui_TextColored(ctx, theme.C.hint, "Make a time selection (or switch Scope to Entire item).")
+  elseif g.scope == SCOPE_TIMESEL and detected.razorOutside then
+    -- The razor area on this lane lies outside the item: no range, and never a fallback to the time selection.
+    reaper.ImGui_TextColored(ctx, theme.C.hint, razorOutsideHint(detected))
+  elseif g.scope == SCOPE_TIMESEL and not common.hasRange(detected) then
+    reaper.ImGui_TextColored(ctx, theme.C.hint, RANGE_HINT)
   elseif g.amount == 0 then
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Raise Reduction to thin points")
   end
@@ -378,19 +446,16 @@ function M.draw(ctx, state, detected)
           gesture.open = true
           gesture.undoFlag, gesture.undoLabel = undoMetaFor(detected.target)
         end
-        local ok, cnt, err, rc = pcall(function()
-          local pts = reducedAt(g)
-          local c, e = base.tgt:writeBulk(base.snapshot, pts, base.t0, base.t1, { noUndo = true, rawShape = true })
-          return c, e, #pts
-        end)
+        -- Every region is written inside the gesture's ONE Undo block (writeJobs passes noUndo).
+        local ok, total, err = pcall(function() return writeJobs(reducedAt(g), true) end)
         if not ok then
-          g.status = "Reduce error: " .. tostring(cnt); g.statusErr = true
+          g.status = "Reduce error: " .. tostring(total); g.statusErr = true
           endGesture(true)
-        elseif not cnt then
+        elseif not total then
           g.status = err or "Reduce write failed"; g.statusErr = true
           endGesture(true)
         else
-          g.status = ("%d -> %d points"):format(base.origCount, rc); g.statusErr = false
+          g.status = ("%d -> %d points"):format(base.origCount, total); g.statusErr = false
         end
       end
     end
@@ -417,17 +482,37 @@ function M.run(state, detected, g)
   local function ok(m)   g.status = m; g.statusErr = false end
 
   if not readyFor(detected, g) then
-    fail("Select a CC lane / envelope / automation item (and a time selection)") return
+    if detected and detected.razorOutside then fail(razorOutsideHint(detected)) return end
+    fail("Select a CC lane / envelope / automation item (and a time selection or a razor area)") return
   end
   local okB, bErr = ensureBaseline(detected, g, false)
   if not okB then fail(bErr or "No target") return end
   if base.origCount == 0 then fail("No points to reduce") return end
-  local reduced = reducedAt(g)
-  local _, label = undoMetaFor(detected.target)
-  local n, wErr = base.tgt:write(reduced, base.t0, base.t1, { rawShape = true, undoLabel = label })
-  if not n then fail(wErr or "Write failed") return end
-  recordWritten()   -- remember our output so a later Reset keeps the true original
-  ok(("Reduced %d -> %d points"):format(base.origCount, #reduced))
+  local jobs = reducedAt(g)
+  local flag, label = undoMetaFor(detected.target)
+
+  local total = 0
+  if #jobs == 1 then
+    -- ONE region: the write layer opens its own Undo block, exactly as it always did.
+    local job = jobs[1]
+    local n, wErr = base.tgt:write(job.pts, job.t0, job.t1, { rawShape = true, undoLabel = label })
+    if not n then fail(wErr or "Write failed") return end
+    recordWritten()   -- remember our output so a later Reset keeps the true original
+    total = #job.pts
+  else
+    -- SEVERAL regions (razor areas), ONE Undo step. The block is closed even if a write throws, and a
+    -- failure part-way still closes it with the label (and records what the lane now holds), so the
+    -- regions already written can be undone and Reset still finds the true original.
+    reaper.Undo_BeginBlock2(0)
+    local okW, res, wErr = pcall(writeJobs, jobs, false)
+    markCCDirty(base.tgt)
+    reaper.Undo_EndBlock2(0, label, flag)
+    recordWritten()
+    if not okW then fail("Write error: " .. tostring(res)) return end
+    if not res then fail(wErr or "Write failed") return end
+    total = res
+  end
+  ok(("Reduced %d -> %d points"):format(base.origCount, total))
 end
 
 return M
