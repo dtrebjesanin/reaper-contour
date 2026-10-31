@@ -142,10 +142,9 @@ local function laneChooser(ctx, detected, lanes)
   if reaper.ImGui_BeginCombo(ctx, "##razor_lane", preview) then
     local ok, err = pcall(function()
       for i, lane in ipairs(lanes) do
-        -- Two tracks can share a name, so the entries need their own ID; the label stays as it reads.
-        reaper.ImGui_PushID(ctx, i)
-        local clicked = reaper.ImGui_Selectable(ctx, lane.label, lane.env == targetEnv)
-        reaper.ImGui_PopID(ctx)
+        -- Two tracks can share a name, so each entry gets its own ID after the "##" (not shown); no ID scope to
+        -- balance if Selectable throws.
+        local clicked = reaper.ImGui_Selectable(ctx, lane.label .. "##lane" .. i, lane.env == targetEnv)
         if clicked then picked = lane.env end
       end
     end)
@@ -155,33 +154,36 @@ local function laneChooser(ctx, detected, lanes)
   return picked
 end
 
--- What the context line says about the range Contour works on, and in which colour: the razor areas on the
--- target's lane (dim), the hint when they all fall outside, else the time selection or the no-selection hint.
+-- What the context line says about the range Contour works on, in which colour, and whether it is a razor text:
+-- the razor areas on the target's lane (dim), the hint when they all fall outside, else the time selection or
+-- the no-selection hint.
 local function rangeText(detected)
   if detected.rangeSource == "razor" and detected.ranges and #detected.ranges >= 1 then
-    return razorRangeText(detected.ranges), theme.C.textDim
+    return razorRangeText(detected.ranges), theme.C.textDim, true
   elseif detected.razorOutside then
-    return razorOutsideText(detected), theme.C.hint
+    return razorOutsideText(detected), theme.C.hint, true
   elseif detected.hasTimeSel then
-    return ("%.3f .. %.3f s"):format(detected.t0, detected.t1), theme.C.textDim
+    return ("%.3f .. %.3f s"):format(detected.t0, detected.t1), theme.C.textDim, false
   end
-  return "No time selection", theme.C.hint
+  return "No time selection", theme.C.hint, false
 end
 
 -- Row 3: ONE context line — what was detected, the range Contour works on, and the Follow toggle pinned to the
 -- right edge of the same line. Two things can take a second line under it (a third when both do):
---   * the range text, when label + range text + Follow do not fit on the line (the razor texts are wider than the
---     time selection's; the outside hint alone is wider than the panel at 360 px). Follow stays on the first line;
+--   * a RAZOR text (the range or the outside hint), when label + text + Follow do not fit on the line (the razor
+--     texts are wider than the time selection's; the outside hint alone is wider than the panel at 360 px).
+--     Follow stays on the first line. The time selection text and "No time selection" never wrap: for a user
+--     without razor areas the line is exactly what it was, with Follow clamped to just after the text;
 --   * the lane chooser (razor areas on two or more lanes) or the one-line note (one lane other than the target):
 --     it never shares the line with the range text, which already fills most of the 360 px.
 local function contextLine(ctx, state, detected)
   -- Measure BEFORE drawing: the row's left edge and the full width available to it give the right edge.
   local x0 = reaper.ImGui_GetCursorPosX and reaper.ImGui_GetCursorPosX(ctx)
   local availW = reaper.ImGui_GetContentRegionAvail and select(1, reaper.ImGui_GetContentRegionAvail(ctx))
-  local text, textCol = rangeText(detected)
+  local text, textCol, isRazor = rangeText(detected)
 
-  -- The Follow checkbox's width (square + inner spacing + label), and whether the whole line fits. Without the
-  -- geometry calls the old behaviour stands: one line, plain SameLine.
+  -- The Follow checkbox's width (square + inner spacing + label), and (razor texts only) whether the whole line
+  -- fits. Without the geometry calls the old behaviour stands: one line, plain SameLine.
   local followW, wrapRange
   if reaper.ImGui_CalcTextSize and reaper.ImGui_GetFrameHeight and type(availW) == "number" then
     local boxH = reaper.ImGui_GetFrameHeight(ctx)
@@ -189,10 +191,12 @@ local function contextLine(ctx, state, detected)
     if type(boxH) == "number" and type(followTextW) == "number" then
       local innerSpacing, itemSpacing = 6, 8   -- ItemInnerSpacing.x, ItemSpacing.x (ui/theme)
       followW = boxH + innerSpacing + followTextW
-      local labelW = reaper.ImGui_CalcTextSize(ctx, detected.label)
-      local textW = reaper.ImGui_CalcTextSize(ctx, text)
-      wrapRange = type(labelW) == "number" and type(textW) == "number"
-        and labelW + itemSpacing + textW + itemSpacing + followW > availW
+      if isRazor then
+        local labelW = reaper.ImGui_CalcTextSize(ctx, detected.label)
+        local textW = reaper.ImGui_CalcTextSize(ctx, text)
+        wrapRange = type(labelW) == "number" and type(textW) == "number"
+          and labelW + itemSpacing + textW + itemSpacing + followW > availW
+      end
     end
   end
 

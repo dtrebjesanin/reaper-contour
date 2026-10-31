@@ -1227,8 +1227,9 @@ local function razorDet(det, ranges, covered)
 end
 -- One shell frame with the header calls recorded in order. Returns the log joined by "|" (entries "text:<s>",
 -- "same", "check:<label>", "width:<n>", "combo:<id>=<preview>", "sel:<label>", "endcombo"), the colour each
--- text was drawn in, and the reaper.SetCursorContext calls. opts.pick: the lane label whose Selectable
--- reports a click; opts.boom: the lane label whose Selectable throws.
+-- text was drawn in, and the ok/error of the frame. opts.pick: the lane (as it reads, without the "##lane<i>"
+-- ID suffix) whose Selectable reports a click; opts.boom: the lane whose Selectable throws.
+local function plain(label) return (label:gsub("##.*$", "")) end
 local function headerFrame(st, det, opts)
   opts = opts or {}
   local log, cols = {}, {}
@@ -1246,8 +1247,8 @@ local function headerFrame(st, det, opts)
     ImGui_EndCombo = function(...) add("endcombo"); return origEnd(...) end,
     ImGui_Selectable = function(_c, label)
       add("sel:" .. label)
-      if opts.boom == label then error("chooser boom") end
-      return opts.pick == label
+      if opts.boom == plain(label) then error("chooser boom") end
+      return opts.pick == plain(label)
     end,
   }, function() ok, err = pcall(shell.draw, CTX, st, det) end)
   return table.concat(log, "|"), cols, ok, err
@@ -1295,7 +1296,8 @@ h.test("chooser lists covered lanes, preview names the target or says choose a l
   local log = headerFrame(newState(), det)
   h.truthy(log:find("text:Razor on 3 lanes:", 1, true), "label: " .. log)
   h.truthy(log:find("width:170|combo:" .. CHOOSER_ID .. "=choose a lane", 1, true), "width 170, placeholder preview: " .. log)
-  h.truthy(log:find("sel:Pad: Volume|sel:Drums: Volume|sel:Bass: Pan|endcombo", 1, true), "entries in order, then EndCombo: " .. log)
+  h.truthy(log:find("sel:Pad: Volume##lane1|sel:Drums: Volume##lane2|sel:Bass: Pan##lane3|endcombo", 1, true),
+    "entries in order with their own IDs, then EndCombo: " .. log)
   -- the target is a covered lane: its label is the preview
   det = razorDet(detEnv(), { { 1, 2 } }, lanes3()); det.details.env = "ENV_D"
   log = headerFrame(newState(), det)
@@ -1312,17 +1314,24 @@ h.test("chooser lists covered lanes, preview names the target or says choose a l
   h.truthy(not log:find(CHOOSER_ID, 1, true) and not log:find("Razor", 1, true), "no razor fields: nothing new")
 end)
 
-h.test("two lanes with the same label get their own ImGui ID", function()
-  -- Two tracks named "Pad" both list "Pad: Volume"; without an ID scope a click on one would hit the other.
+h.test("two lanes with the same name get distinct entry labels, and no ID scope is pushed", function()
+  -- Two tracks named "Pad" both list "Pad: Volume"; the same label would give both the same ImGui ID, so a click
+  -- on one would hit the other. The ID is part of the label (after "##"), so there is no PushID to balance.
   local same = { lane("{1}", "ENV_1", "Pad: Volume"), lane("{2}", "ENV_2", "Pad: Volume") }
-  local pushed, popped = {}, 0
+  local labels, pushes = {}, 0
   stub.reset()
   with({
-    ImGui_PushID = function(_c, id) pushed[#pushed + 1] = id end,
-    ImGui_PopID = function() popped = popped + 1 end,
+    ImGui_PushID = function() pushes = pushes + 1 end,
+    ImGui_Selectable = function(_c, label)
+      if label:find("^Pad: Volume##") then labels[#labels + 1] = label end
+      return label == "Pad: Volume##lane2"   -- click the second one
+    end,
   }, function() shell.draw(CTX, newState(), razorDet(detEnv(), { { 1, 2 } }, same)) end)
-  h.eq(#pushed, popped, "every PushID has its PopID")
-  h.truthy(pushed[1] ~= nil and pushed[1] ~= pushed[2], "the two entries push different IDs")
+  h.eq(#labels, 2, "both entries read 'Pad: Volume'")
+  h.truthy(labels[1] ~= labels[2], "...with different IDs: " .. table.concat(labels, ","))
+  h.eq(pushes, 0, "no PushID/PopID around the entries")
+  h.eq(#stub.rec.cursorCtx, 1, "the click selected a lane")
+  h.eq(stub.rec.cursorCtx[1].env, "ENV_2", "the second Pad, not the first")
 end)
 
 h.test("chooser sits on its own line under the context line, Follow stays on the first", function()
@@ -1353,10 +1362,51 @@ h.test("a range text too long for the first line takes a line of its own, Follow
   atWidth(360, function() log = headerFrame(newState(), razorDet(longLabel(), { { 1.2, 1.95 } }, lanes3())) end)
   h.truthy(log:find("check:Follow##follow|text:Razor 1.200 .. 1.950 s|text:Razor on 3 lanes:|same|width:170|combo:", 1, true),
     "range text, then chooser: " .. log)
-  -- the same rule holds for the time selection text
+end)
+
+h.test("the time selection text and the no-selection hint never wrap: no razor area, no layout change", function()
+  -- A user who draws no razor area sees exactly today's line even with a label too long for it: one line, Follow
+  -- clamped to just after the text.
+  local function longLabel() local d = detAI(); d.label = "Automation item #0 on Volume"; return d end
+  local function followX(det)
+    local calls, xs, log = 0, {}, nil
+    atWidth(360, function()
+      with({
+        -- the first read is the row's left edge; later reads are the cursor after the text, far to the right
+        ImGui_GetCursorPosX = function() calls = calls + 1; return calls == 1 and 14 or 400 end,
+        ImGui_SetCursorPosX = function(_c, x) xs[#xs + 1] = x end,
+      }, function() log = headerFrame(newState(), det) end)
+    end)
+    return log, xs[1]
+  end
+  -- (a) the time selection (old fields only, and with the new fields as core/context.detect fills them)
+  local det = longLabel(); det.hasTimeSel = true
+  local log, x = followX(det)
+  h.truthy(log:find("text:Automation item #0 on Volume|same|text:0.000 .. 4.000 s|same|check:Follow##follow", 1, true),
+    "time selection stays on the first line: " .. log)
+  h.eq(x, 400, "Follow clamped to just after the text, not right-aligned (302)")
   det = longLabel(); det.hasTimeSel = true
-  atWidth(360, function() log = headerFrame(newState(), det) end)
-  h.truthy(log:find("check:Follow##follow|text:0.000 .. 4.000 s", 1, true), "time selection wraps like the rest: " .. log)
+  det.rangeSource, det.ranges, det.hasRange, det.razorOutside, det.razorLanes = "timesel", { { 0, 4 } }, true, false, {}
+  log = followX(det)
+  h.truthy(log:find("text:Automation item #0 on Volume|same|text:0.000 .. 4.000 s|same|check:Follow##follow", 1, true),
+    "time selection with the razor fields: " .. log)
+  -- (b) no time selection at all
+  det = longLabel(); det.hasTimeSel = false
+  log, x = followX(det)
+  h.truthy(log:find("text:Automation item #0 on Volume|same|text:No time selection|same|check:Follow##follow", 1, true),
+    "the no-selection hint stays on the first line: " .. log)
+  h.eq(x, 400, "Follow clamped to just after the hint")
+  -- (c) a razor text of the same label DOES wrap, and Follow is then right-aligned (302 = 14 + 360 - 72)
+  det = razorDet(longLabel(), { { 1.2, 1.95 } }, {})
+  local calls, xs = 0, {}
+  atWidth(360, function()
+    with({
+      ImGui_GetCursorPosX = function() calls = calls + 1; return calls == 1 and 14 or 100 end,
+      ImGui_SetCursorPosX = function(_c, xx) xs[#xs + 1] = xx end,
+    }, function() log = headerFrame(newState(), det) end)
+  end)
+  h.truthy(log:find("check:Follow##follow|text:Razor 1.200 .. 1.950 s", 1, true), "razor text wrapped: " .. log)
+  h.eq(xs[1], 302, "Follow right-aligned on the first line")
 end)
 
 h.test("clicking a lane selects its envelope, then marks the arrange as engaged", function()
@@ -1388,7 +1438,7 @@ h.test("a click is applied after the combo closes (EndCombo first, then the swit
   stub.reset()
   with({
     ImGui_EndCombo = function() seq[#seq + 1] = "endcombo"; stub.rec.comboEnd = stub.rec.comboEnd + 1 end,
-    ImGui_Selectable = function(_c, label) return label == "Pad: Volume" end,
+    ImGui_Selectable = function(_c, label) return label:find("^Pad: Volume##") ~= nil end,
     SetCursorContext = function(m, e) seq[#seq + 1] = "set:" .. tostring(e) end,
   }, function() ok, err = pcall(shell.draw, CTX, newState(), det) end)
   h.truthy(ok, tostring(err))
@@ -1416,7 +1466,7 @@ h.test("a throw inside the chooser still EndCombos and re-raises", function()
   local det = razorDet(detEnv(), { { 1, 2 } }, lanes3())
   local log, _, ok, err = headerFrame(newState(), det, { boom = "Drums: Volume" })
   h.truthy(not ok and tostring(err):find("chooser boom", 1, true), "the error is re-raised: " .. tostring(err))
-  h.truthy(log:find("sel:Drums: Volume|endcombo", 1, true), "EndCombo ran right after the throw: " .. log)
+  h.truthy(log:find("sel:Drums: Volume##lane2|endcombo", 1, true), "EndCombo ran right after the throw: " .. log)
   balanced("chooser throw")
   h.eq(#stub.rec.cursorCtx, 0, "nothing was selected")
 end)
