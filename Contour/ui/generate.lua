@@ -64,8 +64,9 @@ local FEELS = {
 local FEEL_ITEMS   = ""
 for _, f in ipairs(FEELS) do FEEL_ITEMS = FEEL_ITEMS .. f.label .. "\0" end
 
--- Scope + spanFor live in ui.common (shared with the other panels); use common.SCOPE_* and
--- common.spanFor instead of re-defining them here.
+-- Scope + the range resolution live in ui.common (shared with the other panels); use common.SCOPE_*,
+-- common.spansFor (the list of write spans: razor areas, time selection or entire item) and
+-- common.hasRange instead of re-defining them here.
 
 -- ---------------------------------------------------------------------------
 -- Shape-aware output: points-per-cycle + a FALLBACK MIDI CC shape per LFO shape.
@@ -239,6 +240,9 @@ local liveGesture = {
   take      = nil,     -- the take the open block is editing (for clean re-target)
   tgt       = nil,     -- cached CC target for the gesture's take
   snapshot  = nil,     -- cached decoded midistream snapshot of the take at gesture start
+  spans     = nil,     -- the write ranges, FROZEN when the gesture opens (common.spansFor): a razor
+                       -- change mid-drag must not move the write
+  laneKey   = nil,     -- which lane the gesture opened on; a different lane ends the gesture
   errored   = false,   -- a snapshot/fromContext failure occurred; suppress re-opening a
                        -- new undo block every drag frame on a broken take until the gesture
                        -- truly ends (reset in endLiveGesture / M.cleanup).
@@ -423,51 +427,102 @@ local function generateSpan(g, st0, st1, params)
   return okGen, pts
 end
 
--- Core generate+write. Returns (count|nil, errString|nil). `noUndo` true => the caller
--- owns the undo block (live drag); false => self-contained single-undo write.
-local function generateAndWrite(state, detected, g, noUndo)
+-- One LFO per span, each starting at ITS OWN start (a razor area behaves like a time selection that
+-- begins there: phase, rate and every control apply per area). Generates EVERY span before anything is
+-- written, so a failure in any span leaves the lane untouched. Returns { {span, pts, ccShape}, ... } or
+-- (nil, errString). `spans` is the list from common.spansFor: { {t0, t1}, ... }.
+local function generateSpans(g, spans, vmin, vmax)
+  if not spans or #spans == 0 then return nil, "No range to write" end
+  local jobs = {}
+  for i, span in ipairs(spans) do
+    local params, ccShape = buildParams(g, span[1], vmin, vmax)
+    local okGen, pts = generateSpan(g, span[1], span[2], params)
+    if not okGen then return nil, "Generate failed: " .. tostring(pts) end
+    if not pts or #pts == 0 then return nil, "No points generated (empty selection?)" end
+    jobs[i] = { span = span, pts = pts, ccShape = ccShape }
+  end
+  return jobs
+end
+
+-- The write layer's own Undo label and flag per target kind, for the one outer block that wraps a
+-- multi-span write (a single span lets the write layer open its own block, exactly as before).
+local function undoMeta(kind)
+  if kind == "ai"      then return "Contour: Generate automation-item LFO", -1 end
+  if kind == "takeenv" then return "Contour: Generate take-envelope LFO", -1 end
+  if kind == "cc"      then return "Contour: Generate CC LFO", 4 end
+  return "Contour: Generate envelope LFO", -1
+end
+
+-- Core generate+write. Returns (count|nil, errString|nil), the count summed over the spans. `noUndo`
+-- true => the caller owns the undo block (live drag); false => self-contained single-undo write: ONE
+-- span is written by the write layer in its own block, SEVERAL spans share one outer block here.
+-- `spans` (optional) overrides the range; it defaults to common.spansFor.
+local function generateAndWrite(state, detected, g, noUndo, spans)
   local tgt, tErr = target.fromContext(detected)
   if not tgt then return nil, tErr or "No target" end
   -- Pin the panel's CC# as the write target (CC only; retarget without re-clicking a lane).
   if tgt.kind and tgt:kind() == "cc" then tgt._lane = g.ccNum end
 
   local vmin, vmax = tgt:valueRange()
-  local st0, st1 = common.spanFor(tgt, detected, g)   -- time selection or entire item/envelope
-  local params, ccShape = buildParams(g, st0, vmin, vmax)
-
-  local okGen, pts = generateSpan(g, st0, st1, params)
-  if not okGen then return nil, "Generate failed: " .. tostring(pts) end
-  if not pts or #pts == 0 then return nil, "No points generated (empty selection?)" end
+  spans = spans or common.spansFor(tgt, detected, g)   -- razor areas, time selection or entire item/envelope
+  local jobs, jErr = generateSpans(g, spans, vmin, vmax)
+  if not jobs then return nil, jErr end
 
   -- Pre-clamp to the target range (the write layer also clamps).
-  for _, pt in ipairs(pts) do
-    pt.value = math.max(vmin, math.min(vmax, pt.value))
+  for _, job in ipairs(jobs) do
+    for _, pt in ipairs(job.pts) do
+      pt.value = math.max(vmin, math.min(vmax, pt.value))
+    end
   end
 
-  return tgt:write(pts, st0, st1, { ccShape = ccShape, noUndo = noUndo })
+  if #jobs == 1 then
+    local job = jobs[1]
+    return tgt:write(job.pts, job.span[1], job.span[2], { ccShape = job.ccShape, noUndo = noUndo })
+  end
+
+  -- Several spans, ONE Undo step. The block is closed even if a write throws, and a failure part-way
+  -- still closes it with the label, so the spans already written can be undone.
+  local label, flag = undoMeta(tgt:kind())
+  if not noUndo then reaper.Undo_BeginBlock2(0) end
+  local ok, total, wErr = pcall(function()
+    local sum = 0
+    for _, job in ipairs(jobs) do
+      local n, e = tgt:write(job.pts, job.span[1], job.span[2], { ccShape = job.ccShape, noUndo = true })
+      if not n then return nil, e end
+      sum = sum + n
+    end
+    return sum
+  end)
+  if not noUndo then reaper.Undo_EndBlock2(0, label, flag) end
+  if not ok then return nil, "Write error: " .. tostring(total) end
+  return total, wErr
 end
 
 -- BULK live write (v2.1 P): generate points, then write via the cached target +
 -- decoded snapshot using the atomic MIDI_SetAllEvts path (no per-event Insert/Delete,
 -- no MIDI_Sort, no full scan per frame). The caller owns the coalesced undo block,
--- so noUndo=true. Returns (count|nil, errString|nil). `tgt` and `snapshot` are the
--- CACHED gesture objects — never re-fetched here.
-local function liveBulkWrite(tgt, snapshot, detected, g)
+-- so noUndo=true. Returns (count|nil, errString|nil), the count summed over the spans.
+-- `tgt`, `snapshot` and `spans` are the CACHED gesture objects — never re-fetched here; the span list
+-- was frozen when the gesture opened, so a razor change in the middle of a drag cannot move the write.
+-- Each span's write deletes and rewrites its own range, so frames never compound.
+local function liveBulkWrite(tgt, snapshot, spans, g)
   -- Pin the panel's CC# as the write target (CC only; retarget without re-clicking a lane).
   if tgt.kind and tgt:kind() == "cc" then tgt._lane = g.ccNum end
 
   local vmin, vmax = tgt:valueRange()
-  local st0, st1 = common.spanFor(tgt, detected, g)   -- time selection or entire item/envelope
-  local params, ccShape = buildParams(g, st0, vmin, vmax)
-
-  local okGen, pts = generateSpan(g, st0, st1, params)
-  if not okGen then return nil, "Generate failed: " .. tostring(pts) end
-  if not pts or #pts == 0 then return nil, "No points generated (empty selection?)" end
+  local jobs, jErr = generateSpans(g, spans, vmin, vmax)
+  if not jobs then return nil, jErr end
 
   -- No pre-clamp loop here: writeBulk clamps+floors every value via clampCC internally
   -- (single clamp site). Keeping a redundant clamp here would be a no-op on the final
   -- written values.
-  return tgt:writeBulk(snapshot, pts, st0, st1, { ccShape = ccShape, noUndo = true })
+  local total = 0
+  for _, job in ipairs(jobs) do
+    local n, e = tgt:writeBulk(snapshot, job.pts, job.span[1], job.span[2], { ccShape = job.ccShape, noUndo = true })
+    if not n then return nil, e end
+    total = total + n
+  end
+  return total
 end
 
 -- The currently-selected shape id (defaults to "none").
@@ -505,6 +560,20 @@ local function customOverlayPoints(g)
   return out
 end
 
+-- Which lane a live gesture is writing to: the envelope, the automation item and the take. A change of
+-- any of them (REAPER selected another envelope or item mid-drag) must end the open gesture.
+local function laneKeyOf(detected)
+  local d = detected and detected.details or {}
+  return tostring(d.env) .. ":" .. tostring(d.aiIndex) .. ":" .. tostring(d.take)
+end
+
+-- The hint for a razor area that falls outside the target (an automation item, or a take envelope's item).
+local function razorOutsideHint(detected)
+  if detected and detected.target == "ai" then return "The razor area is outside this automation item" end
+  return "The razor area is outside this item"
+end
+local RANGE_HINT = "Make a time selection or a razor area (or switch Scope to Entire item)."
+
 -- Whether a live write can run right now (CC target + a time selection + valid CC#
 -- + a REAL shape selected). When shape == "none" (the default, v2.1 U1) we generate
 -- and write NOTHING — this is the explicit no-op gate that stops auto-generation on
@@ -515,7 +584,7 @@ local function canGenerate(detected, g)
   -- only); Entire-item scope (CC / AI / take envelope) uses fullSpan() and needs no time selection.
   local isTrackEnv = detected.target == "envelope" and not (detected.details and detected.details.take)
   local needTimeSel = g.scope == common.SCOPE_TIMESEL or isTrackEnv
-  if needTimeSel and not detected.hasTimeSel then return false end
+  if needTimeSel and not common.hasRange(detected) then return false end   -- razor area(s) or time selection
   if detected.target == "cc" then
     return g.ccNum >= 0 and g.ccNum <= 127 and detected.details.take ~= nil
   elseif detected.target == "envelope" then
@@ -562,6 +631,8 @@ local function endLiveGesture(committed, label)
   liveGesture.take = nil
   liveGesture.tgt = nil
   liveGesture.snapshot = nil
+  liveGesture.spans = nil
+  liveGesture.laneKey = nil
   liveGesture.errored = false
 end
 
@@ -576,6 +647,8 @@ function M.cleanup()
     liveGesture.take = nil
     liveGesture.tgt = nil
     liveGesture.snapshot = nil
+    liveGesture.spans = nil
+    liveGesture.laneKey = nil
   end
   liveGesture.errored = false
 end
@@ -834,6 +907,11 @@ function M.drawBody(ctx, state, detected)
   local curTake = detected and detected.details and detected.details.take or nil
   if liveGesture.open and liveGesture.take and curTake ~= liveGesture.take then
     endLiveGesture(true)  -- nil label => use the target-aware liveGesture.undoLabel
+  end
+  -- Same for the LANE: a different envelope or automation item mid-gesture closes the old block before
+  -- anything writes, so the frozen spans and the cached target never end up on the wrong lane.
+  if liveGesture.open and liveGesture.laneKey and laneKeyOf(detected) ~= liveGesture.laneKey then
+    endLiveGesture(true)
   end
 
   -- == Scope + CC# == one row.
@@ -1120,8 +1198,11 @@ function M.drawFooter(ctx, state, detected)
   local tgtKind = detected and detected.target
   if tgtKind ~= "cc" and tgtKind ~= "envelope" and tgtKind ~= "ai" then
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Select a MIDI CC lane, a track envelope, or an automation item.")
-  elseif g.scope == common.SCOPE_TIMESEL and not detected.hasTimeSel then
-    reaper.ImGui_TextColored(ctx, theme.C.hint, "Make a time selection (or switch Scope to Entire item).")
+  elseif g.scope == common.SCOPE_TIMESEL and detected.razorOutside then
+    -- The razor area on this lane lies outside the item: no range, and never a fallback to the time selection.
+    reaper.ImGui_TextColored(ctx, theme.C.hint, razorOutsideHint(detected))
+  elseif g.scope == common.SCOPE_TIMESEL and not common.hasRange(detected) then
+    reaper.ImGui_TextColored(ctx, theme.C.hint, RANGE_HINT)
   elseif currentShapeId(g) == "none" then
     -- v2.1 U1: the default None shape is a no-op; prompt the user to choose a shape.
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Pick a shape to generate")
@@ -1191,6 +1272,9 @@ function M.drawFooter(ctx, state, detected)
           else
             liveGesture.tgt = tgt
             liveGesture.snapshot = snap
+            -- Freeze the range for the whole gesture, and remember the lane it belongs to.
+            liveGesture.spans = common.spansFor(tgt, detected, g)
+            liveGesture.laneKey = laneKeyOf(detected)
           end
         end
       end
@@ -1200,7 +1284,7 @@ function M.drawFooter(ctx, state, detected)
         -- No per-frame PreventUIRefresh here: research shows it does NOT improve live MIDI
         -- smoothness (the MIDI_SetAllEvts path is already a single atomic call) and only adds
         -- overhead. pcall keeps a thrown write from dangling the open undo block.
-        local okWrite, count, wErr = pcall(liveBulkWrite, liveGesture.tgt, liveGesture.snapshot, detected, g)
+        local okWrite, count, wErr = pcall(liveBulkWrite, liveGesture.tgt, liveGesture.snapshot, liveGesture.spans, g)
         if not okWrite then
           count, wErr = nil, "Live write error: " .. tostring(count)
         end
@@ -1255,15 +1339,16 @@ function M.run(state, detected, g)
     return
   end
   local isTrackEnv = tk == "envelope" and not (detected.details and detected.details.take)
-  if (g.scope == common.SCOPE_TIMESEL or isTrackEnv) and not detected.hasTimeSel then
-    fail("Make a time selection") return
+  if (g.scope == common.SCOPE_TIMESEL or isTrackEnv) and not common.hasRange(detected) then
+    fail(detected.razorOutside and razorOutsideHint(detected) or "Make a time selection or a razor area") return
   end
   if tk == "cc" and (g.ccNum < 0 or g.ccNum > 127) then fail("Set a valid CC# (0-127)") return end
   -- Defense-in-depth (v2.1 U1): the UI button is gated by canGenerate, but M.run is public
   -- and must never overwrite with a flat line when None is selected.
   if currentShapeId(g) == "none" then fail("Pick a shape to generate") return end
 
-  local count, wErr = generateAndWrite(state, detected, g, false)  -- self-contained undo
+  -- Self-contained undo: one Undo step for every span (a single span is the write layer's own block).
+  local count, wErr = generateAndWrite(state, detected, g, false)
   if not count then fail(wErr or "Write failed") return end
   if tk == "cc" then ok(("Wrote %d CC events to CC%d"):format(count, g.ccNum))
   elseif tk == "ai" then ok(("Wrote %d automation-item points"):format(count))

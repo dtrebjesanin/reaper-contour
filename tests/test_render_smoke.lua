@@ -19,6 +19,7 @@ local drawpad         = require("ui.drawpad")
 local overlay         = require("ui.overlay")
 local common          = require("ui.common")
 local theme           = require("ui.theme")
+local target          = require("core.target")
 
 local CTX = "CTX"  -- opaque; the stub ignores it
 
@@ -925,6 +926,289 @@ h.test("render matrix runs under the Klimt palette", function()
       h.truthy(overlay.start(CTX, detEnv())); overlay.frame(CTX); overlay.frame(CTX); overlay.finish()
     end)
   end)
+end)
+
+-- ---- razor areas: ONE span list drives Generate ------------------------------------------------------------
+-- The descriptor fields below (rangeSource, ranges, razorOutside, hasRange) are what core/context.detect
+-- produces; these tests build them by hand. A descriptor WITHOUT them must behave exactly as before.
+local HINT_RANGE      = "Make a time selection or a razor area (or switch Scope to Entire item)."
+local HINT_OUTSIDE_AI = "The razor area is outside this automation item"
+local HINT_OUTSIDE_IT = "The razor area is outside this item"
+
+local function razor(det, ranges)
+  det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "razor", ranges, #ranges > 0, false
+  return det
+end
+local function detTake()
+  return { target = "envelope", label = "Take envelope", hasTimeSel = true, t0 = 3, t1 = 8,
+           details = { env = "TENV", take = "TAKE" } }
+end
+-- A Sine panel state (Live as asked) that has been drawn once, so state.gen exists.
+local function sineState(live)
+  stub.reset()
+  local st = newState()
+  generate.draw(CTX, st, detEnv())
+  local g = st.gen; g.shapeIdx = 1; g.live = live and true or false
+  stub.reset()
+  return st, g
+end
+-- Texts the footer draws for `det` (both Text and TextColored).
+local function footerTexts(st, det)
+  local texts = {}
+  with({
+    ImGui_Text = function(_c, s) texts[#texts + 1] = s end,
+    ImGui_TextColored = function(_c, _col, s) texts[#texts + 1] = s end,
+  }, function() generate.drawFooter(CTX, st, det) end)
+  return table.concat(texts, "|")
+end
+-- Every point the stub recorded, as a list of times (track/take non-Ex inserts, then automation-item Ex).
+local function insertedTimes()
+  local ts = {}
+  for _, p in ipairs(stub.rec.ins) do ts[#ts + 1] = p.t end
+  for _, p in ipairs(stub.rec.insEx) do ts[#ts + 1] = p.t end
+  return ts
+end
+local function inAny(t, spans)
+  for _, s in ipairs(spans) do if t >= s[1] - 1e-6 and t <= s[2] + 1e-6 then return true end end
+  return false
+end
+
+h.test("common.spansFor: razor wins, Entire item ignores it, no razor fields = today's span", function()
+  stub.reset()
+  local gT, gE = { scope = common.SCOPE_TIMESEL }, { scope = common.SCOPE_ENTIRE }
+  -- no razor fields at all: today's single time-selection span (clamped to an automation item's bounds)
+  local det = detAI(); det.t0, det.t1 = -2, 14
+  local spans = common.spansFor(target.fromContext(det), det, gT)
+  h.eq(#spans, 1); h.almost(spans[1][1], 0); h.almost(spans[1][2], 10)
+  -- razor source: the ranges, verbatim and as a COPY (later changes to detected.ranges must not leak in)
+  det = razor(detAI(), { { 1, 2 }, { 4, 5 } })
+  spans = common.spansFor(target.fromContext(det), det, gT)
+  h.eq(#spans, 2); h.almost(spans[1][1], 1); h.almost(spans[1][2], 2); h.almost(spans[2][1], 4); h.almost(spans[2][2], 5)
+  det.ranges[1][1] = 99
+  h.almost(spans[1][1], 1, 1e-9, "spansFor returns a copy")
+  -- the razor area beats the time selection (det carries t0=0, t1=4)
+  det = razor(detEnv(), { { 2, 3 } })
+  spans = common.spansFor(target.fromContext(det), det, gT)
+  h.eq(#spans, 1); h.almost(spans[1][1], 2); h.almost(spans[1][2], 3)
+  -- "Entire item" ignores razor areas: one span equal to fullSpan
+  det = razor(detAI(), { { 2, 3 } })
+  local tgt = target.fromContext(det)
+  local a, b = tgt:fullSpan()
+  spans = common.spansFor(tgt, det, gE)
+  h.eq(#spans, 1); h.almost(spans[1][1], a); h.almost(spans[1][2], b)
+  -- an area that falls outside the item: NO span (never the time selection)
+  det = detAI(); det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "razor", {}, false, true
+  h.eq(#common.spansFor(target.fromContext(det), det, gT), 0)
+  -- MIDI CC never takes razor ranges: one span, the time selection
+  det = razor(detCC(), { { 1, 2 }, { 3, 4 } })
+  spans = common.spansFor(target.fromContext(det), det, gT)
+  h.eq(#spans, 1, "CC stays on one span")
+  -- spanFor stays: the first span's t0, t1
+  local s0, s1 = common.spanFor(target.fromContext(detAI()), razor(detAI(), { { 1, 2 }, { 4, 5 } }), gT)
+  h.almost(s0, 1); h.almost(s1, 2)
+end)
+
+h.test("Generate writes one LFO per razor area in one Undo step", function()
+  local st, g = sineState(false)
+  local det = razor(detEnv(), { { 0, 1 }, { 2, 3 } })
+  generate.run(st, det, g)
+  h.truthy(not g.statusErr, "run errored: " .. tostring(g.status))
+  h.eq(stub.rec.undoBlocks, 1, "ONE Undo block for both areas")
+  local spans = { { 0, 1 }, { 2, 3 } }
+  local first, firstV = {}, {}
+  for _, p in ipairs(stub.rec.ins) do
+    h.truthy(inAny(p.t, spans), "point outside every area: " .. p.t)
+    local k = p.t <= 1 + 1e-6 and 1 or 2
+    if first[k] == nil or p.t < first[k] then first[k] = p.t; firstV[k] = p.v end
+  end
+  h.truthy(first[1] and first[2], "both areas received points")
+  h.almost(first[1], 0, 1e-6, "area 1 starts at its t0")
+  h.almost(first[2], 2, 1e-6, "area 2 starts at its t0")
+  h.almost(firstV[1], firstV[2], 1e-9, "each area's LFO starts at its own start (same phase)")
+  h.eq(#stub.rec.delRange, 2, "one range delete per area")
+  h.eq(g.status, ("Wrote %d envelope points"):format(#stub.rec.ins), "status carries the summed count")
+end)
+
+h.test("a razor area beats the time selection", function()
+  local st, g = sineState(false)
+  local det = razor(detEnv(), { { 2, 3 } })      -- detEnv() still carries t0=0, t1=4, hasTimeSel=true
+  generate.run(st, det, g)
+  h.truthy(not g.statusErr, tostring(g.status))
+  h.truthy(#stub.rec.ins > 0, "wrote")
+  for _, p in ipairs(stub.rec.ins) do h.truthy(p.t >= 2 - 1e-6 and p.t <= 3 + 1e-6, "point outside the razor area: " .. p.t) end
+end)
+
+h.test("a razor area is a range even without a time selection", function()
+  local st, g = sineState(false)
+  local det = razor(detEnv(), { { 1, 2 } }); det.hasTimeSel = false
+  generate.run(st, det, g)
+  h.truthy(not g.statusErr, tostring(g.status))
+  h.truthy(#stub.rec.ins > 0, "wrote")
+  for _, p in ipairs(stub.rec.ins) do h.truthy(p.t >= 1 - 1e-6 and p.t <= 2 + 1e-6, "outside: " .. p.t) end
+end)
+
+h.test("Entire item ignores razor areas when generating", function()
+  local st, g = sineState(false)
+  g.scope = common.SCOPE_ENTIRE
+  local det = razor(detAI(), { { 2, 3 } })
+  generate.run(st, det, g)
+  h.truthy(not g.statusErr, tostring(g.status))
+  h.eq(#stub.rec.delRangeEx, 1, "one span")
+  h.almost(stub.rec.delRangeEx[1][2], 0); h.almost(stub.rec.delRangeEx[1][3], 10)   -- the AI's own bounds
+end)
+
+h.test("the Undo label of a multi-area write is target-aware and the flag is ALL", function()
+  local cases = {
+    { det = function() return razor(detEnv(),  { { 0, 1 }, { 2, 3 } }) end, label = "Contour: Generate envelope LFO" },
+    { det = function() return razor(detAI(),   { { 0, 1 }, { 2, 3 } }) end, label = "Contour: Generate automation-item LFO" },
+    { det = function() return razor(detTake(), { { 3, 4 }, { 5, 6 } }) end, label = "Contour: Generate take-envelope LFO" },
+  }
+  for _, c in ipairs(cases) do
+    local st, g = sineState(false)
+    local ends = {}
+    with({ Undo_EndBlock2 = function(_p, label, flag) ends[#ends + 1] = { label, flag } end }, function()
+      generate.run(st, c.det(), g)
+    end)
+    h.truthy(not g.statusErr, tostring(g.status))
+    h.eq(#stub.rec.delRange + #stub.rec.delRangeEx, 2, c.label .. ": both areas written")
+    h.eq(stub.rec.undoBlocks, 1, c.label .. ": one Begin")
+    h.eq(#ends, 1, c.label .. ": one End")
+    h.eq(ends[1][1], c.label); h.eq(ends[1][2], -1)
+  end
+end)
+
+h.test("a single area keeps today's self-contained write (one Undo block, same label)", function()
+  local st, g = sineState(false)
+  local ends = {}
+  with({ Undo_EndBlock2 = function(_p, label, flag) ends[#ends + 1] = { label, flag } end }, function()
+    generate.run(st, razor(detEnv(), { { 1, 2 } }), g)
+  end)
+  h.eq(stub.rec.undoBlocks, 1); h.eq(#ends, 1)
+  h.eq(ends[1][1], "Contour: Generate envelope LFO"); h.eq(ends[1][2], -1)
+end)
+
+-- Live drag: the span list is frozen when the gesture opens. A body edit (Baseline) drives each frame; the
+-- stubbed IsAnyItemActive keeps the gesture open between frames.
+local function liveFrame(st, det)
+  with({
+    ImGui_SliderInt = function(_c, label, v) return label:find("gen_base", 1, true) ~= nil, v end,
+    ImGui_IsAnyItemActive = function() return true end,
+  }, function()
+    generate.drawBody(CTX, st, det)
+    generate.drawFooter(CTX, st, det)
+  end)
+end
+
+h.test("live preview writes every razor area each frame", function()
+  local st, g = sineState(true)
+  local det = razor(detEnv(), { { 0, 1 }, { 2, 3 } })
+  local ok, err = pcall(liveFrame, st, det)
+  generate.cleanup()
+  h.truthy(ok, tostring(err))
+  h.eq(#stub.rec.delRange, 2, "one range delete per area, in one frame")
+  local seen = { false, false }
+  for _, p in ipairs(stub.rec.ins) do
+    h.truthy(inAny(p.t, { { 0, 1 }, { 2, 3 } }), "outside: " .. p.t)
+    if p.t <= 1 + 1e-6 then seen[1] = true else seen[2] = true end
+  end
+  h.truthy(seen[1] and seen[2], "both areas written")
+  h.eq(stub.rec.undoBlocks, 1, "one gesture block")
+end)
+
+h.test("frozen spans during a live drag", function()
+  local st, g = sineState(true)
+  local det = razor(detEnv(), { { 0, 1 } })
+  local ok, err = pcall(function()
+    liveFrame(st, det)
+    local after1 = #stub.rec.ins
+    h.truthy(after1 > 0, "first frame wrote")
+    det.ranges = { { 2, 3 } }                      -- the razor area changes in the middle of the drag
+    det.hasRange = true
+    liveFrame(st, det)
+    h.truthy(#stub.rec.ins > after1, "second frame wrote too")
+    for _, p in ipairs(stub.rec.ins) do h.truthy(p.t >= -1e-6 and p.t <= 1 + 1e-6, "write left the frozen span: " .. p.t) end
+    for _, d in ipairs(stub.rec.delRange) do h.almost(d[1], 0); h.almost(d[2], 1) end
+    h.eq(stub.rec.undoBlocks, 1, "still ONE block")
+  end)
+  generate.cleanup()
+  h.truthy(ok, tostring(err))
+end)
+
+h.test("a lane change ends the live gesture before anything writes to the new lane", function()
+  local st, g = sineState(true)
+  local log = {}
+  local function detOn(env) local d = detEnv(); d.details = { env = env }; return d end
+  local over = {
+    Undo_BeginBlock2 = function() log[#log + 1] = "begin"; stub.rec.undoBlocks = stub.rec.undoBlocks + 1 end,
+    Undo_EndBlock2 = function() log[#log + 1] = "end" end,
+    InsertEnvelopePoint = function(e) log[#log + 1] = "ins:" .. tostring(e); return true end,
+  }
+  local ok, err = pcall(function()
+    with(over, function()
+      liveFrame(st, detOn("ENV_A"))
+      h.eq(#log > 0 and log[1], "begin")
+      local ends = 0
+      for _, e in ipairs(log) do if e == "end" then ends = ends + 1 end end
+      h.eq(ends, 0, "gesture open on ENV_A")
+      liveFrame(st, detOn("ENV_B"))
+    end)
+  end)
+  generate.cleanup()
+  h.truthy(ok, tostring(err))
+  local endAt, firstB, lastA
+  for i, e in ipairs(log) do
+    if e == "end" and not endAt then endAt = i end
+    if e == "ins:ENV_B" and not firstB then firstB = i end
+    if e == "ins:ENV_A" then lastA = i end
+  end
+  h.truthy(endAt, "the ENV_A gesture was closed (EndBlock2)")
+  h.truthy(firstB, "the new lane was written")
+  h.truthy(lastA < endAt and endAt < firstB, "end comes after the last ENV_A write and before the first ENV_B write")
+  h.eq(stub.rec.undoBlocks, 2, "ENV_B opened its own block")
+end)
+
+h.test("hints: outside, range, and no hint change for a user without a razor area", function()
+  -- the razor area is outside the automation item
+  local st, g = sineState(false)
+  local det = detAI(); det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "razor", {}, false, true
+  h.truthy(footerTexts(st, det):find(HINT_OUTSIDE_AI, 1, true), "AI outside hint")
+  -- ... or outside the item (take envelope)
+  det = detTake(); det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "razor", {}, false, true
+  local txt = footerTexts(st, det)
+  h.truthy(txt:find(HINT_OUTSIDE_IT, 1, true), "take envelope outside hint")
+  h.truthy(not txt:find(HINT_OUTSIDE_AI, 1, true), "...and not the AI text")
+  -- no range at all (no razor fields): the new range hint
+  det = detEnv(); det.hasTimeSel = false
+  h.truthy(footerTexts(st, det):find(HINT_RANGE, 1, true), "range hint")
+  det = detEnv(); det.hasTimeSel = false; det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "timesel", {}, false, false
+  h.truthy(footerTexts(st, det):find(HINT_RANGE, 1, true), "range hint (descriptor with the new fields)")
+  -- "Entire item" does not need a range, so neither hint shows
+  g.scope = common.SCOPE_ENTIRE
+  det = detAI(); det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "razor", {}, false, true
+  txt = footerTexts(st, det)
+  h.truthy(not txt:find("razor area", 1, true), "Entire item: no razor hint")
+  -- a descriptor with a range shows neither
+  g.scope = common.SCOPE_TIMESEL
+  txt = footerTexts(st, detEnv())
+  h.truthy(not txt:find("Make a time selection", 1, true) and not txt:find("razor area", 1, true), "ready: no hint")
+end)
+
+h.test("a razor area outside the item writes nothing, live or on Generate", function()
+  local st, g = sineState(true)
+  local det = detAI(); det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "razor", {}, false, true
+  local ok, err = pcall(liveFrame, st, det)
+  generate.cleanup()
+  h.truthy(ok, tostring(err))
+  h.eq(#insertedTimes(), 0, "live: nothing written")
+  h.eq(stub.rec.undoBlocks, 0, "live: no undo block opened")
+  g.live = false
+  generate.run(st, det, g)
+  h.truthy(g.statusErr, "run reports an error")
+  h.eq(g.status, HINT_OUTSIDE_AI)
+  h.eq(#insertedTimes(), 0, "run: nothing written")
+  h.eq(stub.rec.undoBlocks, 0)
+  -- hasTimeSel stays true on this descriptor, so only hasRange can be what blocks it
+  h.truthy(det.hasTimeSel)
 end)
 
 h.run()

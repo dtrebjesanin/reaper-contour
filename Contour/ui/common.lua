@@ -23,12 +23,16 @@ end
 -- are time-selection only (they have no item). Automation items, take envelopes AND MIDI CC clamp the
 -- time-selection span to their item bounds (points outside the item are dropped / never play; for CC
 -- an unclamped span converted to out-of-item ticks, and fullSpan's loop awareness rides along).
-function M.spanFor(tgt, detected, g)
-  local kind = tgt and tgt.kind and tgt:kind()
-  if g.scope == M.SCOPE_ENTIRE and kind and kind ~= "envelope" and tgt.fullSpan then
-    local a, b = tgt:fullSpan()
-    if a and b and b > a then return a, b end
-  end
+--
+-- spansFor is the ONE place that resolves the range, as a list of { t0, t1 } spans:
+--   1. "Entire item" on a non-track-envelope target  -> { fullSpan }   (razor areas are ignored)
+--   2. the target lane's razor areas (detected.rangeSource == "razor") -> detected.ranges, a COPY
+--      (a live gesture freezes the list, so later changes to detected.ranges must not reach it). An
+--      EMPTY list means every area fell outside the item: there is no range, and it never falls back
+--      to the time selection. MIDI CC has no razor areas, so it never takes this branch.
+--   3. otherwise the time selection, with the clamp described above, as a one-element list.
+-- A descriptor without rangeSource (older tests, other callers) counts as "timesel".
+local function timeSelSpan(tgt, detected, kind)
   local t0, t1 = detected.t0, detected.t1
   if (kind == "ai" or kind == "takeenv" or kind == "cc") and tgt.fullSpan then
     local a, b = tgt:fullSpan()
@@ -38,6 +42,38 @@ function M.spanFor(tgt, detected, g)
     end
   end
   return t0, t1
+end
+
+function M.spansFor(tgt, detected, g)
+  local kind = tgt and tgt.kind and tgt:kind()
+  if g.scope == M.SCOPE_ENTIRE and kind and kind ~= "envelope" and tgt.fullSpan then
+    local a, b = tgt:fullSpan()
+    if a and b and b > a then return { { a, b } } end
+  end
+  if detected.rangeSource == "razor" and kind ~= "cc" then
+    local spans = {}
+    for i, r in ipairs(detected.ranges or {}) do spans[i] = { r[1], r[2] } end
+    return spans
+  end
+  local t0, t1 = timeSelSpan(tgt, detected, kind)
+  return { { t0, t1 } }
+end
+
+-- The first span's t0, t1 (the single-span callers: Reduce, until it takes the list). With no span at
+-- all (a razor area outside the item) it falls back to the time-selection span, because these callers
+-- have no way to say "no range"; Generate never calls this.
+function M.spanFor(tgt, detected, g)
+  local first = M.spansFor(tgt, detected, g)[1]
+  if first then return first[1], first[2] end
+  return timeSelSpan(tgt, detected, tgt and tgt.kind and tgt:kind())
+end
+
+-- Is there a range to work on? detected.hasRange (razor areas or time selection) when the descriptor
+-- carries it, else the time selection, which is all an older descriptor knows about.
+function M.hasRange(detected)
+  if not detected then return false end
+  if detected.hasRange ~= nil then return detected.hasRange and true or false end
+  return detected.hasTimeSel and true or false
 end
 
 -- Fader polish, drawn OVER the just-drawn slider (call IMMEDIATELY after it):
