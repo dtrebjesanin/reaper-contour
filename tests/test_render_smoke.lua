@@ -1191,10 +1191,11 @@ h.test("hints: outside, range, and no hint change for a user without a razor are
   local txt = footerTexts(st, det)
   h.truthy(txt:find(HINT_OUTSIDE_IT, 1, true), "take envelope outside hint")
   h.truthy(not txt:find(HINT_OUTSIDE_AI, 1, true), "...and not the AI text")
-  -- no range at all (no razor fields): the new range hint
-  det = detEnv(); det.hasTimeSel = false
+  -- no range at all (no razor fields): the new range hint (on a target with an item: a track envelope has no
+  -- Entire item, see "hints and messages follow the target")
+  det = detAI(); det.hasTimeSel = false
   h.truthy(footerTexts(st, det):find(HINT_RANGE, 1, true), "range hint")
-  det = detEnv(); det.hasTimeSel = false; det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "timesel", {}, false, false
+  det = detAI(); det.hasTimeSel = false; det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "timesel", {}, false, false
   h.truthy(footerTexts(st, det):find(HINT_RANGE, 1, true), "range hint (descriptor with the new fields)")
   -- "Entire item" does not need a range, so neither hint shows
   g.scope = common.SCOPE_ENTIRE
@@ -1797,6 +1798,139 @@ h.test("panel: one razor area, a time selection, or no descriptor keeps Launch e
   with({ ImGui_TextColored = function(_c, col, s) if col == theme.C.warn then shown[#shown + 1] = s end end },
     function() shell.draw(CTX, st, razor(detEnv(), { { 0, 1 }, { 2, 3 } })) end)
   h.truthy(table.concat(shown, "|"):find(MSG_ONE_AREA, 1, true), "shell.draw reaches the panel's message: " .. table.concat(shown, "|"))
+end)
+
+-- ---- Scope: one dropdown in every panel, the range option named after the lane's range ----------------------
+-- Danilo, 2026-11-01: Scope is a dropdown in Generate, Reduce and Transform alike, and its range option says
+-- what the range is right now: "Time selection", or "Razor area" / "Razor areas" when the target lane has
+-- razor areas (they beat the time selection). MIDI CC has no razor areas, so it always says "Time selection".
+-- The hints follow the target the same way: MIDI CC never asks for a razor area, and a track envelope (no
+-- item) never offers Entire item.
+h.test("common.rangeLabel names the range the lane has", function()
+  h.eq(common.rangeLabel(nil), "Time selection", "nil-safe")
+  h.eq(common.rangeLabel(detEnv()), "Time selection", "no razor fields")
+  h.eq(common.rangeLabel(razor(detEnv(), { { 1, 2 } })), "Razor area")
+  h.eq(common.rangeLabel(razor(detAI(), { { 1, 2 }, { 3, 4 } })), "Razor areas")
+  local out = detAI(); out.rangeSource, out.ranges, out.hasRange, out.razorOutside = "razor", {}, false, true
+  h.eq(common.rangeLabel(out), "Razor area", "an area outside the item still beats the time selection")
+  h.eq(common.rangeLabel(razor(detCC(), { { 1, 2 } })), "Time selection", "MIDI CC never uses a razor area")
+end)
+
+h.test("common.rangeHint: what to make, then the scope that needs no range", function()
+  h.eq(common.rangeHint(detEnv(), "Entire item"), HINT_RANGE)
+  h.eq(common.rangeHint(nil, "Entire item"), HINT_RANGE, "nil-safe")
+  h.eq(common.rangeHint(detCC(), "Entire item"), "Make a time selection (or switch Scope to Entire item).")
+  h.eq(common.rangeHint(detEnv(), "Selected points"), "Make a time selection or a razor area (or switch Scope to Selected points).")
+  h.eq(common.rangeHint(detEnv()), "Make a time selection or a razor area.")
+  h.eq(common.noRangeText(detCC()), "No time selection")
+  h.eq(common.noRangeText(detAI()), "No time selection or razor area")
+end)
+
+-- Every Scope dropdown that drawFn(det) draws: { label, items, cur } per ImGui_Combo call, and the number of
+-- radio buttons. With `pick`, each Scope dropdown reports a click on that index.
+local function scopeCombos(drawFn, det, pick)
+  local combos, radios = {}, 0
+  with({
+    ImGui_Combo = function(_c, label, cur, items)
+      if not label:find("^Scope##") then return false, cur end
+      combos[#combos + 1] = { label = label, items = items, cur = cur }
+      if pick then return true, pick end
+      return false, cur
+    end,
+    ImGui_RadioButton = function() radios = radios + 1; return false end,
+  }, function() drawFn(det) end)
+  return combos, radios
+end
+
+h.test("Scope dropdowns: the range option follows the lane in Generate, Reduce and Transform", function()
+  -- Generate (a track envelope has no Scope dropdown at all)
+  stub.reset()
+  local st = newState()
+  local gen = function(d) generate.draw(CTX, st, d) end
+  local combos = scopeCombos(gen, razor(detAI(), { { 0, 1 }, { 2, 3 } }))
+  h.eq(#combos, 1, "Generate: one Scope dropdown")
+  h.eq(combos[1].items, "Razor areas\0Entire item\0")
+  h.eq(scopeCombos(gen, detCC())[1].items, "Time selection\0Entire item\0")
+  h.eq(#scopeCombos(gen, razor(detEnv(), { { 1, 2 } })), 0, "Generate: no Scope for a track envelope")
+  -- Reduce: a track envelope has no Entire item
+  stub.reset()
+  st = newState(); st.op = "reduce"
+  local red = function(d) reduce.draw(CTX, st, d) end
+  combos = scopeCombos(red, razor(detEnv(), { { 1, 2 } }))
+  h.eq(#combos, 1, "Reduce: one Scope dropdown")
+  h.eq(combos[1].items, "Razor area\0Selected points\0")
+  h.eq(scopeCombos(red, detAI())[1].items, "Time selection\0Entire item\0Selected points\0")
+  -- Transform: a dropdown, not radio buttons, with the range option first like the other panels
+  stub.reset()
+  transform_panel.scope = "points"
+  local tr = function(d) transform_panel.draw(CTX, newState(), d) end
+  local radios
+  combos, radios = scopeCombos(tr, razor(detEnv(), { { 1, 2 } }))
+  h.eq(radios, 0, "Transform: no radio buttons")
+  h.eq(#combos, 1, "Transform: one Scope dropdown")
+  h.eq(combos[1].label, "Scope##tr_scope")
+  h.eq(combos[1].items, "Razor area\0Selected points\0")
+  h.eq(combos[1].cur, 1, "Selected points is the second option")
+  scopeCombos(tr, detEnv(), 0)
+  h.eq(transform_panel.scope, "timesel", "the range option hands the time-selection scope to the tool")
+  scopeCombos(tr, detEnv(), 1)
+  h.eq(transform_panel.scope, "points")
+  h.eq(scopeCombos(tr, razor(detCC(), { { 1, 2 } }))[1].items, "Time selection\0Selected points\0", "Transform on MIDI CC")
+end)
+
+h.test("hints and messages follow the target: MIDI CC asks for a time selection only, a track envelope never offers Entire item", function()
+  -- Generate footer
+  local st, g = sineState(false)
+  local det = detCC(); det.hasTimeSel = false
+  local txt = footerTexts(st, det)
+  h.truthy(txt:find("Make a time selection (or switch Scope to Entire item).", 1, true), "Generate CC: " .. txt)
+  h.truthy(not txt:find("razor", 1, true), "Generate CC: no razor area in the hint")
+  -- a track envelope has no Scope dropdown, so the hint must not depend on the scope the state still holds
+  for _, scope in ipairs({ common.SCOPE_TIMESEL, common.SCOPE_ENTIRE }) do
+    g.scope = scope
+    det = detEnv(); det.hasTimeSel = false
+    txt = footerTexts(st, det)
+    h.truthy(txt:find("Make a time selection or a razor area.", 1, true), "Generate track envelope, scope " .. scope .. ": " .. txt)
+    h.truthy(not txt:find("Entire item", 1, true), "Generate track envelope: no Entire item")
+  end
+  g.scope = common.SCOPE_TIMESEL
+  -- Generate status on a MIDI CC without a time selection
+  det = detCC(); det.hasTimeSel = false
+  generate.run(st, det, g)
+  h.eq(g.status, "Make a time selection")
+  -- Reduce hints
+  stub.reset()
+  local rst = newState(); rst.op = "reduce"
+  local function redHints(d)
+    local seen = {}
+    with({ ImGui_TextColored = function(_c, _col, s) seen[#seen + 1] = s end }, function() reduce.draw(CTX, rst, d) end)
+    return table.concat(seen, "|")
+  end
+  det = detEnv(); det.hasTimeSel = false
+  txt = redHints(det)
+  h.truthy(txt:find("Make a time selection or a razor area (or switch Scope to Selected points).", 1, true), "Reduce track envelope: " .. txt)
+  det = detCC(); det.hasTimeSel = false
+  txt = redHints(det)
+  h.truthy(txt:find("Make a time selection (or switch Scope to Entire item).", 1, true), "Reduce CC: " .. txt)
+  det = detAI(); det.hasTimeSel = false
+  h.truthy(redHints(det):find(HINT_RANGE, 1, true), "Reduce automation item: the full range hint")
+  -- Reduce status: a missing range names the range, a missing target keeps the general text
+  local rg = { amount = 50, scope = common.SCOPE_TIMESEL, curveFit = false }
+  det = detCC(); det.hasTimeSel = false
+  reduce.run(rst, det, rg)
+  h.eq(rg.status, "Make a time selection")
+  det = detEnv(); det.hasTimeSel = false
+  reduce.run(rst, det, rg)
+  h.eq(rg.status, "Make a time selection or a razor area")
+  reduce.run(rst, detNone(), rg)
+  h.eq(rg.status, "Select a CC lane / envelope / automation item (and a time selection or a razor area)")
+  -- Transform: a MIDI CC lane with no selected events and no time selection
+  stub.reset(); trParams()
+  for _, e in ipairs(stub.ccList) do e.sel = false end
+  det = detCC(); det.hasTimeSel = false
+  local started, msg = overlay.start(CTX, det)
+  h.eq(started, false)
+  h.eq(msg, "Select some points, or make a time selection, then launch Transform")
 end)
 
 h.run()

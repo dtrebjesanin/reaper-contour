@@ -76,7 +76,7 @@ After installing, search the **Actions** list (Actions → Show action list) for
 
 **The active target follows what you're working on.** Select an envelope or automation item in the arrange, or select CC points in the MIDI editor, and Contour switches to that target automatically (you can also pick the tab manually or turn off *Follow*).
 
-**Razor areas work as a per-lane time selection.** The time selection covers every track; a razor area belongs to one lane. When the target lane has a razor area, Contour works inside it instead of the time selection, and the context line shows its range.
+**Razor areas work as a per-lane time selection.** The time selection covers every track; a razor area belongs to one lane. When the target lane has a razor area, Contour works inside it instead of the time selection, and the context line shows its range. The **Scope** dropdown in Generate, Reduce and Transform names the range: it reads **Razor area** (or **Razor areas**) when the lane has one, and **Time selection** when it does not.
 
 - Drag a razor area on **one envelope lane** and Contour switches to that lane (with *Follow* on).
 - Drag across **several lanes** and the context line offers a lane chooser instead. Contour only ever changes the lane it targets.
@@ -86,7 +86,7 @@ After installing, search the **Actions** list (Actions → Show action list) for
 **Colours.** The **…** button after the target tabs picks a palette. **Auto** (the default) follows your REAPER theme; **Contour** is the original look; Cassatt, Kandinsky, Tam, Paquin and Klimt are alternatives. On a wide window, Generate lays its settings out in two columns.
 
 - **Generate** — pick the target, choose a shape + rate + amplitude (+ phase, swing, skew…), watch the live preview, then apply. Output replaces the time selection or razor area.
-- **Reduce** — choose a scope (time selection / whole item / selected points) and drag the amount; the preview thins the points live. 0% restores the original. A razor area on the lane takes the place of the time selection.
+- **Reduce** — choose a scope (time selection or razor area / entire item / selected points) and drag the amount; the preview thins the points live. 0% restores the original. A razor area on the lane takes the place of the time selection.
 - **Transform** — make a selection (points, time, or a razor area), launch the overlay, and drag the on-shape handles. Run directly (action or hotkey), Transform takes a razor area on the lane over selected points; with several areas on the lane, it asks for one:
   - **↔ Stretch** (horizontal), **↕ Scale / Compress** (vertical, via the Curve knob), **✕ Warp** (push a region in X and/or Y), **↻ Tilt**.
   - **Shift + ✕ centre handle** moves every point by the same amount on one axis: up/down (values) or left/right (times), locked to the direction you start in. A left/right move stops as a block at the item edge; release Shift mid-drag to go back to Warp.

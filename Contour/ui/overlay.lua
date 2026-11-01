@@ -303,10 +303,10 @@ local function readScope(detected, scope)
     if #ranges == 0 then return nil, common.razorOutsideText(detected) end
     t0, t1 = ranges[1][1], ranges[1][2]
   elseif scope == "timesel" then
-    if not detected.hasTimeSel then return nil, "No time selection — make one, or use Selected points" end
+    if not detected.hasTimeSel then return nil, common.noRangeText(detected) .. " — make one, or use Selected points" end
     t0, t1 = detected.t0, detected.t1
   else
-    if #sel == 0 then return nil, "No points selected — select some, or use Time selection" end
+    if #sel == 0 then return nil, "No points selected — select some, or use " .. common.rangeLabel(detected) end
     t0, t1 = sel[1].t, sel[1].t
     for _, p in ipairs(sel) do if p.t < t0 then t0 = p.t end; if p.t > t1 then t1 = p.t end end
   end
@@ -340,7 +340,7 @@ function M.start(ctx, detected)
   elseif pts then scope = "points"
   elseif hasRange then scope = "timesel"
   elseif detected.rangeSource == "razor" then return false, common.razorOutsideText(detected)  -- areas exist, all outside
-  else return false, "Select some points, or make a time selection or a razor area, then launch Transform" end
+  else return false, "Select some points, or make " .. common.rangeWhat(detected) .. ", then launch Transform" end
   local region, t0, t1, all
   if scope == "points" then region, t0, t1, all = pts, pt0, pt1, ptAll
   else region, t0, t1, all = readScope(detected, "timesel") end

@@ -38,12 +38,16 @@ local function ui(state)
 end
 
 -- Scope choices per target (TRACK envelopes have no "item", so no Entire-item option; TAKE envelopes
--- do have one — their item — so they get the full list like CC/AI).
-local function scopeChoices(t, isTake)
+-- do have one — their item — so they get the full list like CC/AI). The range option is named after the
+-- lane's range (common.rangeLabel): "Time selection", or "Razor area(s)" when the lane has razor areas.
+local function scopeChoices(detected)
+  local t = detected and detected.target
+  local isTake = detected and detected.details and detected.details.take ~= nil
+  local range = { label = common.rangeLabel(detected), v = SCOPE_TIMESEL }
   if t == "envelope" and not isTake then
-    return { { label = "Time selection", v = SCOPE_TIMESEL }, { label = "Selected points", v = SCOPE_SELECTED } }
+    return { range, { label = "Selected points", v = SCOPE_SELECTED } }
   end
-  return { { label = "Time selection", v = SCOPE_TIMESEL },
+  return { range,
            { label = "Entire item", v = SCOPE_ENTIRE },
            { label = "Selected points", v = SCOPE_SELECTED } }
 end
@@ -337,6 +341,14 @@ function M.cleanup()
   -- externally. (Previously this hard-invalidated, which made Reset restore the already-reduced data.)
 end
 
+-- Does this scope need a range (razor areas or the time selection)? Time selection always does, and a TRACK
+-- envelope always does (it has no item, so no Entire item); Selected points never does.
+local function needsRange(detected, g)
+  if g.scope == SCOPE_SELECTED then return false end
+  if g.scope == SCOPE_TIMESEL then return true end
+  return detected ~= nil and detected.target == "envelope" and not (detected.details and detected.details.take)
+end
+
 -- Can a write run for this scope right now (selection check is deferred to ensureBaseline)?
 local function readyFor(detected, g)
   if not (detected and detected.details) then return false end
@@ -347,9 +359,7 @@ local function readyFor(detected, g)
     elseif t == "envelope" then return detected.details.env ~= nil
     else return detected.details.env ~= nil and detected.details.aiIndex ~= nil end
   end
-  local isTrackEnv = (t == "envelope") and not (detected.details and detected.details.take)
-  local needTimeSel = (g.scope == SCOPE_TIMESEL) or isTrackEnv
-  if needTimeSel and not common.hasRange(detected) then return false end   -- razor area(s) or time selection
+  if needsRange(detected, g) and not common.hasRange(detected) then return false end   -- razor area(s) or time selection
   if t == "cc" then return detected.details.take ~= nil
   elseif t == "envelope" then return detected.details.env ~= nil
   else return detected.details.env ~= nil and detected.details.aiIndex ~= nil end
@@ -378,13 +388,14 @@ function M.draw(ctx, state, detected)
   -- Scope selector (target-appropriate options; maps the combo index to a scope constant).
   local t = detected and detected.target
   do
-    local choices = scopeChoices(t, detected and detected.details and detected.details.take ~= nil)
+    local choices = scopeChoices(detected)
     local cur, items = 0, ""
     for i, c in ipairs(choices) do
       items = items .. c.label .. "\0"
       if c.v == g.scope then cur = i - 1 end
     end
     if choices[cur + 1].v ~= g.scope then g.scope = choices[cur + 1].v end  -- snap if prev scope invalid here
+    reaper.ImGui_SetNextItemWidth(ctx, common.SCOPE_W)
     local changed, idx = reaper.ImGui_Combo(ctx, "Scope##red_scope", cur, items, #items)
     if changed and choices[idx + 1] and choices[idx + 1].v ~= g.scope then g.scope = choices[idx + 1].v; acc(true) end
   end
@@ -412,11 +423,13 @@ function M.draw(ctx, state, detected)
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Select a MIDI CC lane, a track envelope, or an automation item.")
   elseif g.scope == SCOPE_SELECTED then
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Select points in the editor, then raise Reduction.")
-  elseif g.scope == SCOPE_TIMESEL and detected.razorOutside then
+  elseif needsRange(detected, g) and detected.razorOutside then
     -- The razor area on this lane lies outside the item: no range, and never a fallback to the time selection.
     reaper.ImGui_TextColored(ctx, theme.C.hint, common.razorOutsideText(detected))
-  elseif g.scope == SCOPE_TIMESEL and not common.hasRange(detected) then
-    reaper.ImGui_TextColored(ctx, theme.C.hint, common.RANGE_HINT)
+  elseif needsRange(detected, g) and not common.hasRange(detected) then
+    -- The other scope that needs no range: a track envelope has no Entire item, so it offers Selected points.
+    local isTrackEnv = t == "envelope" and not (detected.details and detected.details.take)
+    reaper.ImGui_TextColored(ctx, theme.C.hint, common.rangeHint(detected, isTrackEnv and "Selected points" or "Entire item"))
   elseif g.amount == 0 then
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Raise Reduction to thin points")
   end
@@ -475,6 +488,10 @@ function M.run(state, detected, g)
 
   if not readyFor(detected, g) then
     if detected and detected.razorOutside then fail(common.razorOutsideText(detected)) return end
+    local t = detected and detected.target
+    if (t == "cc" or t == "envelope" or t == "ai") and needsRange(detected, g) and not common.hasRange(detected) then
+      fail("Make " .. common.rangeWhat(detected)) return
+    end
     fail("Select a CC lane / envelope / automation item (and a time selection or a razor area)") return
   end
   local okB, bErr = ensureBaseline(detected, g, false)

@@ -10,6 +10,25 @@ M.SCOPE_MODES = { "Time selection", "Entire item" }
 M.SCOPE_ITEMS = ""
 for _, s in ipairs(M.SCOPE_MODES) do M.SCOPE_ITEMS = M.SCOPE_ITEMS .. s .. "\0" end
 M.SCOPE_TIMESEL, M.SCOPE_ENTIRE = 0, 1
+-- Every panel draws Scope as a dropdown of this width (Generate, Reduce and Transform look the same).
+M.SCOPE_W = 170
+
+-- The range option of every Scope dropdown is named after the range the target lane has right now: the time
+-- selection, or its razor areas, which beat the time selection (also when they all fall outside the item).
+-- MIDI CC has no razor areas, so it always says "Time selection". The option keeps its index; only the text
+-- changes.
+function M.rangeLabel(detected)
+  if detected and detected.target ~= "cc" and detected.rangeSource == "razor" then
+    if type(detected.ranges) == "table" and #detected.ranges > 1 then return "Razor areas" end
+    return "Razor area"
+  end
+  return "Time selection"
+end
+
+-- The Scope items for Generate's dropdown: the range option, then Entire item.
+function M.scopeItems(detected)
+  return M.rangeLabel(detected) .. "\0" .. M.SCOPE_MODES[2] .. "\0"
+end
 
 -- Two-column layout: a panel lays its lower sections out side by side once its content region is at
 -- least this wide (px). Pure width check, so the threshold is unit-tested without ImGui.
@@ -78,8 +97,25 @@ end
 
 -- The razor-area texts, in ONE place: Generate, Reduce, the context line, the overlay and the Transform panel
 -- all say the same thing, byte for byte (the tests pin them).
--- RANGE_HINT: no range at all (no razor area on the lane, no time selection).
-M.RANGE_HINT = "Make a time selection or a razor area (or switch Scope to Entire item)."
+-- What the user can make when there is no range: MIDI CC has no razor areas, so it takes a time selection only.
+function M.rangeWhat(detected)
+  if detected and detected.target == "cc" then return "a time selection" end
+  return "a time selection or a razor area"
+end
+-- What is missing when there is no range, for a message that then says "make one".
+function M.noRangeText(detected)
+  if detected and detected.target == "cc" then return "No time selection" end
+  return "No time selection or razor area"
+end
+-- The no-range hint: what to make, then (when the panel offers one) the other scope that needs no range. A
+-- track envelope has no item, so its callers never offer Entire item.
+function M.rangeHint(detected, altScope)
+  local s = "Make " .. M.rangeWhat(detected)
+  if altScope then s = s .. " (or switch Scope to " .. altScope .. ")" end
+  return s .. "."
+end
+-- RANGE_HINT: no range at all (no razor area on the lane, no time selection), on a target with an item.
+M.RANGE_HINT = M.rangeHint(nil, "Entire item")
 -- MSG_ONE_AREA: Transform has one box, so the lane's razor areas must be exactly one.
 M.MSG_ONE_AREA = "Transform needs one razor area on this lane"
 -- A razor area that lies outside the target (an automation item, or a take envelope's item) is NOT "no range":

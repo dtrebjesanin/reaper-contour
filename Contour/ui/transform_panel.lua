@@ -1,4 +1,4 @@
--- ui/transform_panel.lua — Contour's Transform op body: a Scope toggle + Launch button. The overlay tool
+-- ui/transform_panel.lua — Contour's Transform op body: a Scope dropdown + Launch button. The overlay tool
 -- owns the shaping controls (Curve / Power-Sine / Symmetrical) and the live readout, not this panel.
 local M = {}
 local theme = require("ui.theme")
@@ -23,7 +23,8 @@ local function resolveCmd()
   return reaper.NamedCommandLookup("_Contour_Transform")
 end
 
--- Shown (and Launch disabled) when the Time selection scope would take several razor areas of the target lane:
+-- Shown (and Launch disabled) when the range scope (the dropdown then reads "Razor areas") would take several
+-- razor areas of the target lane:
 -- the overlay has one box, so it needs one span. Same text as ui/overlay.lua's refusal. The Selected points
 -- scope never asks for a razor area, so it never warns and Launch works (if the overlay later falls back to
 -- the time-selection scope it refuses on its own). The text lives in ui/common.lua.
@@ -34,13 +35,17 @@ function M.draw(ctx, state, detected)
   reaper.ImGui_TextColored(ctx, theme.C.hint, "Pick a scope, then Launch — shaping controls are in the tool.")
   reaper.ImGui_Separator(ctx)
 
-  -- Scope: which region the tool operates on (handed to the tool at launch via ExtState).
-  local rPts = reaper.ImGui_RadioButton(ctx, "Selected points##tr_sp", M.scope == "points")
-  reaper.ImGui_SameLine(ctx)
-  local rTS  = reaper.ImGui_RadioButton(ctx, "Time selection##tr_ts", M.scope == "timesel")
-  if rPts then M.scope = "points" end
-  if rTS  then M.scope = "timesel" end
-  local manyAreas = severalAreas and M.scope == "timesel"   -- after the radio click: this frame's scope
+  -- Scope: which region the tool operates on (handed to the tool at launch via ExtState). The same dropdown as
+  -- Generate and Reduce: the range option first, named after the lane's range (common.rangeLabel), then
+  -- Selected points.
+  do
+    local cur = (M.scope == "timesel") and 0 or 1
+    local items = common.rangeLabel(detected) .. "\0Selected points\0"
+    reaper.ImGui_SetNextItemWidth(ctx, common.SCOPE_W)
+    local changed, idx = reaper.ImGui_Combo(ctx, "Scope##tr_scope", cur, items, #items)
+    if changed and idx == 0 then M.scope = "timesel" elseif changed and idx == 1 then M.scope = "points" end
+  end
+  local manyAreas = severalAreas and M.scope == "timesel"   -- after the dropdown pick: this frame's scope
 
   if manyAreas then reaper.ImGui_TextColored(ctx, theme.C.warn, common.MSG_ONE_AREA) end
 

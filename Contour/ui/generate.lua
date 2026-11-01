@@ -916,8 +916,9 @@ function M.drawBody(ctx, state, detected)
     and not (detected.details and detected.details.take)
   local showCC = detected and detected.target == "cc"
   if not isTrackEnv then
-    reaper.ImGui_SetNextItemWidth(ctx, 170)
-    local changed, idx = reaper.ImGui_Combo(ctx, "Scope##gen_scope", g.scope, common.SCOPE_ITEMS, #common.SCOPE_ITEMS)
+    reaper.ImGui_SetNextItemWidth(ctx, common.SCOPE_W)
+    local items = common.scopeItems(detected)  -- the range option says "Razor area" when the lane has one
+    local changed, idx = reaper.ImGui_Combo(ctx, "Scope##gen_scope", g.scope, items, #items)
     if changed and idx ~= g.scope then g.scope = idx; acc(true) end
   end
   if showCC then
@@ -1188,14 +1189,18 @@ function M.drawFooter(ctx, state, detected)
   ready = canGenerate(detected, g)
 
   -- == Hints ==
+  -- A TRACK envelope always needs a range (canGenerate's rule): it has no Scope dropdown, so the scope the state
+  -- still holds from another target must not hide the hint, and the hint offers no Entire item.
   local tgtKind = detected and detected.target
+  local isTrackEnv = tgtKind == "envelope" and not (detected.details and detected.details.take)
+  local needRange = g.scope == common.SCOPE_TIMESEL or isTrackEnv
   if tgtKind ~= "cc" and tgtKind ~= "envelope" and tgtKind ~= "ai" then
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Select a MIDI CC lane, a track envelope, or an automation item.")
-  elseif g.scope == common.SCOPE_TIMESEL and detected.razorOutside then
+  elseif needRange and detected.razorOutside then
     -- The razor area on this lane lies outside the item: no range, and never a fallback to the time selection.
     reaper.ImGui_TextColored(ctx, theme.C.hint, common.razorOutsideText(detected))
-  elseif g.scope == common.SCOPE_TIMESEL and not common.hasRange(detected) then
-    reaper.ImGui_TextColored(ctx, theme.C.hint, common.RANGE_HINT)
+  elseif needRange and not common.hasRange(detected) then
+    reaper.ImGui_TextColored(ctx, theme.C.hint, common.rangeHint(detected, not isTrackEnv and "Entire item" or nil))
   elseif currentShapeId(g) == "none" then
     -- v2.1 U1: the default None shape is a no-op; prompt the user to choose a shape.
     reaper.ImGui_TextColored(ctx, theme.C.hint, "Pick a shape to generate")
@@ -1333,7 +1338,7 @@ function M.run(state, detected, g)
   end
   local isTrackEnv = tk == "envelope" and not (detected.details and detected.details.take)
   if (g.scope == common.SCOPE_TIMESEL or isTrackEnv) and not common.hasRange(detected) then
-    fail(detected.razorOutside and common.razorOutsideText(detected) or "Make a time selection or a razor area") return
+    fail(detected.razorOutside and common.razorOutsideText(detected) or "Make " .. common.rangeWhat(detected)) return
   end
   if tk == "cc" and (g.ccNum < 0 or g.ccNum > 127) then fail("Set a valid CC# (0-127)") return end
   -- Defense-in-depth (v2.1 U1): the UI button is gated by canGenerate, but M.run is public
