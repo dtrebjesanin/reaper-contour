@@ -319,23 +319,28 @@ function M.start(ctx, detected)
   if not detected or not (detected.target == "envelope" or detected.target == "ai" or detected.target == "cc") then
     return false, "Select a track envelope, automation item, or a MIDI CC lane"
   end
-  -- Scope: a SATISFIABLE explicit handoff from the Contour panel wins; otherwise PRECEDENCE — selected
-  -- points, else the time selection. An explicit choice that can't be met (e.g. "points" with nothing
-  -- selected) falls back to precedence rather than erroring, so a direct run with only a time selection just
-  -- works and a stale/leftover handoff can never strand the tool. Consume the handoff so it's a true
-  -- one-shot. Only error when NEITHER selected points nor a time selection exist.
+  -- Scope: a SATISFIABLE explicit handoff from the Contour panel wins; otherwise PRECEDENCE — a razor area
+  -- that gives the target a range, else selected points, else the time selection. The razor area beats
+  -- selected points because points often stay selected from earlier work, while a razor area is a fresh,
+  -- deliberate drag (Danilo, 2026-11-01); several areas on the lane therefore refuse even with points
+  -- selected, and an area outside the target (razorOutside) never blocks selected points. An explicit choice
+  -- that can't be met (e.g. "points" with nothing selected) falls back to precedence rather than erroring,
+  -- so a direct run with only a time selection just works and a stale/leftover handoff can never strand the
+  -- tool. Consume the handoff so it's a true one-shot. Only error when there is no range and no points.
   local handoff = reaper.GetExtState("Contour", "tr_scope")
   reaper.DeleteExtState("Contour", "tr_scope", false)
   local pts, pt0, pt1, ptAll = readScope(detected, "points")  -- non-nil region iff points are selected
   -- "A range": the lane's razor areas, else the time selection (an older descriptor knows only the latter).
   local hasRange = common.hasRange(detected)
+  local razorRange = hasRange and detected.rangeSource == "razor"
   local scope
   if handoff == "timesel" and hasRange then scope = "timesel"
   elseif handoff == "points" and pts then scope = "points"
+  elseif razorRange then scope = "timesel"
   elseif pts then scope = "points"
   elseif hasRange then scope = "timesel"
   elseif detected.rangeSource == "razor" then return false, common.razorOutsideText(detected)  -- areas exist, all outside
-  else return false, "Select some points, or make a time selection, then launch Transform" end
+  else return false, "Select some points, or make a time selection or a razor area, then launch Transform" end
   local region, t0, t1, all
   if scope == "points" then region, t0, t1, all = pts, pt0, pt1, ptAll
   else region, t0, t1, all = readScope(detected, "timesel") end

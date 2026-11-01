@@ -1668,7 +1668,63 @@ h.test("overlay: the time selection path is unchanged for descriptors without a 
   local msg
   started, msg = overlay.start(CTX, det)
   h.eq(started, false)
-  h.eq(msg, "Select some points, or make a time selection, then launch Transform")
+  h.eq(msg, "Select some points, or make a time selection or a razor area, then launch Transform")
+end)
+
+-- ---- razor areas: a direct run (the Transform action or its hotkey, no scope handed over) ------------------
+-- A razor area that gives the target a range beats selected points (Danilo, 2026-11-01). The panel's
+-- explicit "Selected points" scope still wins (covered in "two areas refuse").
+h.test("direct run: a razor area beats selected points", function()
+  stub.reset(); trParams()   -- the fixture points at t = 0, 2, 4 are all selected
+  local started, serr = overlay.start(CTX, razor(detEnv(), { { 2, 4 } }))
+  h.truthy(started, "start: " .. tostring(serr))
+  local b = overlay._boundsNow()
+  h.almost(b.tmin, 2, 1e-9, "the region is the razor area, not the selected points (0 .. 4)")
+  h.almost(b.tmax, 4, 1e-9)
+  overlay.finish()
+end)
+
+h.test("direct run: several razor areas refuse, also with selected points", function()
+  stub.reset(); trParams()
+  local started, msg = overlay.start(CTX, razor(detEnv(), { { 0, 1 }, { 2, 3 } }))
+  h.eq(started, false)
+  h.eq(msg, MSG_ONE_AREA)
+end)
+
+h.test("direct run: a razor area outside the target leaves selected points working", function()
+  stub.reset(); trParams()
+  local det = detAI(); det.rangeSource, det.ranges, det.hasRange, det.razorOutside = "razor", {}, false, true
+  local started, serr = overlay.start(CTX, det)
+  h.truthy(started, "selected points work when the razor area misses this automation item: " .. tostring(serr))
+  local b = overlay._boundsNow()
+  h.almost(b.tmin, 1); h.almost(b.tmax, 3)   -- the selected automation-item points at t = 1 and 3
+  overlay.finish()
+end)
+
+h.test("direct run end to end: context.detect reads the razor area, Transform uses it over selected points", function()
+  stub.reset(); trParams()
+  -- a lower-case GUID, as a hand-edited project may store it; the area 1.5 .. 4.5 s holds the points at 2 and 4
+  stub.tracks = { { handle = "TR1", name = "Synth", razor = '1.5 4.5 "{e1}"',
+                    envs = { { handle = "ENV1", guid = "{E1}", name = "Pan" } } } }
+  context._resetRazor(); context._resetRecency()   -- a direct run is a fresh script: fresh context state
+  local det
+  with({
+    MIDIEditor_GetActive = function() return nil end,
+    GetSelectedEnvelope = function() return "ENV1" end,
+    CountAutomationItems = function() return 0 end,   -- a plain track envelope, no automation item
+  }, function() det = context.detect() end)
+  h.eq(det.target, "envelope")
+  h.eq(det.rangeSource, "razor", "the razor area beats the 0 .. 4 s time selection")
+  h.eq(#det.ranges, 1)
+  local started, serr = overlay.start(CTX, det)
+  h.truthy(started, "start: " .. tostring(serr))
+  local b = overlay._boundsNow()
+  -- _boundsNow spans the region's points: 2 .. 4 inside the razor area (the selected points alone give 0 .. 4)
+  h.almost(b.tmin, 2, 1e-9, "the region is the points inside the razor area")
+  h.almost(b.tmax, 4, 1e-9)
+  overlay.finish()
+  stub.tracks = {}
+  context._resetRazor(); context._resetRecency()
 end)
 
 -- Draw the Transform panel for `det` with every Button clicked. Returns the warn-coloured and the other

@@ -105,6 +105,7 @@ Without `js_ReaScriptAPI`, the 250 ms rule alone decides. Contour compares the s
 - The overlay's "Time selection" scope uses the target lane's razor area when the lane has exactly one.
 - When the lane has several areas, the Transform panel says "Transform needs one razor area on this lane", and Launch does nothing.
 - The overlay runs as its own script. It reads the razor areas itself, with the same core code.
+- Added 2026-11-01 (Danilo): when Transform runs from its own action or hotkey, with no scope from the panel, a razor area that gives the target a range beats selected points. Several areas on the lane then refuse, also when points are selected. An area outside the target does not block selected points. The panel's explicit "Selected points" scope still wins.
 
 ## Architecture
 
