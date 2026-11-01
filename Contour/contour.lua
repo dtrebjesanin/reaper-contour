@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.3.0
+-- @version 1.3.1
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -28,28 +28,13 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.3.0
---   Razor areas: a razor area on the target lane now works as that lane's own time selection, for
---   Generate, Reduce and Transform. When the lane has one, it wins over the time selection.
---   Razor areas: Generate writes one LFO into each razor area on the lane, and Reduce thins each
---   area. Each run is still one undo step.
---   Razor areas: with Follow on, a razor drag on one envelope lane switches Contour to that lane.
---   A drag over several lanes shows a lane chooser on the context line instead.
---   Razor areas: Transform uses the lane's razor area. With several areas on the lane it asks for
---   one (or use Selected points). Run on its own (action or hotkey), Transform takes a razor area
---   over selected points.
---   Razor areas: a take envelope uses the razor area on its item lane. An automation item or item
---   uses only the part of the area inside it, and says so when the area misses it. MIDI CC keeps
---   the time selection.
---   Panel: a compact header with one context line. Generate's Live / Generate / Reset stay pinned
---   at the bottom while the settings scroll.
---   Panel: on a wide window Generate shows its settings in two columns. Contour now opens wide
---   enough for that; narrow the window to get one column.
---   Panel: colour palettes, from the "..." button after the target tabs. Auto (the default)
---   follows your REAPER theme. Contour keeps the previous colours. Also Cassatt, Kandinsky, Tam,
---   Paquin and Klimt.
---   Generate: Scope and CC# share one row, presets and drawings get a Rename button, and the
---   custom-shape list is now called Drawing.
+--   v1.3.1
+--   Panel: Scope is a dropdown in Generate, Reduce and Transform (Transform had radio buttons).
+--   Its first option names the lane's range: Time selection, or Razor area / Razor areas when the
+--   lane has razor areas. MIDI CC always says Time selection.
+--   Hints: MIDI CC no longer asks for a razor area, and a track envelope no longer suggests Entire
+--   item (Reduce suggests Selected points instead). Generate's hint on a track envelope no longer
+--   goes missing when Entire item was left selected on another target.
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua
