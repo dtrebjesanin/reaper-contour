@@ -1,5 +1,5 @@
 -- @description Contour
--- @version 1.2.6
+-- @version 1.3.0
 -- @author Danilo Trebjesanin
 -- @link https://github.com/dtrebjesanin/reaper-contour
 -- @about
@@ -14,6 +14,9 @@
 --   - **Transform** — a mouse overlay to stretch / scale / compress / warp / tilt / reverse / flip the
 --     selected points or time selection directly under the cursor.
 --
+--   A **razor area** on the target lane works as that lane's own time selection, for all three.
+--   The panel's colours follow your REAPER theme, or pick one of the built-in palettes.
+--
 --   ## Dependencies (install separately via ReaPack — NOT bundled)
 --   - **ReaImGui** — the panel UI
 --   - **js_ReaScriptAPI** — the Transform overlay
@@ -25,18 +28,28 @@
 --
 --   Licensed under the GNU GPL v3 (or later). See the LICENSE file in the repository.
 -- @changelog
---   v1.2.6
---   Transform: Symmetrical, Power/Sine, the Flip mode and Small handles are remembered between
---   launches. Curve still starts linear every time.
---   Transform: Shift + the centre handle moves the points as a block on ONE axis, picked by the
---   direction you start in - up/down moves the values (points stop at the lane edge), left/right
---   moves the times (the whole group stops at the item edge). Release Shift mid-drag to warp again.
---   Transform: a "Small handles" option in the panel draws the handles as small coloured dots, for
---   short selections.
---   Transform: grabbing a handle off its centre no longer makes the points jump.
---   Transform: vertical steps (two points at the same time) keep their direction through repeated
---   drags, and Reverse mirrors them correctly.
---   Transform: holding a handle still no longer rewrites the points on every frame.
+--   v1.3.0
+--   Razor areas: a razor area on the target lane now works as that lane's own time selection, for
+--   Generate, Reduce and Transform. When the lane has one, it wins over the time selection.
+--   Razor areas: Generate writes one LFO into each razor area on the lane, and Reduce thins each
+--   area. Each run is still one undo step.
+--   Razor areas: with Follow on, a razor drag on one envelope lane switches Contour to that lane.
+--   A drag over several lanes shows a lane chooser on the context line instead.
+--   Razor areas: Transform uses the lane's razor area. With several areas on the lane it asks for
+--   one (or use Selected points). Run on its own (action or hotkey), Transform takes a razor area
+--   over selected points.
+--   Razor areas: a take envelope uses the razor area on its item lane. An automation item or item
+--   uses only the part of the area inside it, and says so when the area misses it. MIDI CC keeps
+--   the time selection.
+--   Panel: a compact header with one context line. Generate's Live / Generate / Reset stay pinned
+--   at the bottom while the settings scroll.
+--   Panel: on a wide window Generate shows its settings in two columns. Contour now opens wide
+--   enough for that; narrow the window to get one column.
+--   Panel: colour palettes, from the "..." button after the target tabs. Auto (the default)
+--   follows your REAPER theme. Contour keeps the previous colours. Also Cassatt, Kandinsky, Tam,
+--   Paquin and Klimt.
+--   Generate: Scope and CC# share one row, presets and drawings get a Rename button, and the
+--   custom-shape list is now called Drawing.
 -- @provides
 --   [main] contour_transform.lua
 --   [nomain] core/arrangecoords.lua
